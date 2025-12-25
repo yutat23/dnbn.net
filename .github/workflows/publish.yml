@@ -1,0 +1,41 @@
+name: Publish NuGet Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # プライベートリポジトリの場合、repo権限も必要
+      # repo: read
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          
+      - name: Restore dependencies
+        run: dotnet restore
+        
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+        
+      - name: Pack
+        run: dotnet pack --configuration Release --no-build --output ./artifacts
+        
+      - name: Publish to GitHub Packages
+        run: dotnet nuget push ./artifacts/*.nupkg --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+        
+      # NuGet.orgに公開する場合は、以下のコメントを外してAPIキーを設定
+      # - name: Publish to NuGet.org
+      #   run: dotnet nuget push ./artifacts/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+
