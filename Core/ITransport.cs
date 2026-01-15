@@ -7,30 +7,30 @@ namespace Dnbn.Core;
 /// </summary>
 public interface ITransport
 {
-    /// <summary>
-    /// 接続状態
-    /// </summary>
-    bool IsConnected { get; }
+  /// <summary>
+  /// 接続状態
+  /// </summary>
+  bool IsConnected { get; }
 
-    /// <summary>
-    /// 接続する
-    /// </summary>
-    Task ConnectAsync();
+  /// <summary>
+  /// 接続する
+  /// </summary>
+  Task ConnectAsync();
 
-    /// <summary>
-    /// 切断する
-    /// </summary>
-    Task DisconnectAsync();
+  /// <summary>
+  /// 切断する
+  /// </summary>
+  Task DisconnectAsync();
 
-    /// <summary>
-    /// データを送信する
-    /// </summary>
-    Task SendAsync(byte[] data);
+  /// <summary>
+  /// データを送信する
+  /// </summary>
+  Task SendAsync(byte[] data);
 
-    /// <summary>
-    /// データを受信する（ストリームから読み取る）
-    /// </summary>
-    Task<int> ReceiveAsync(byte[] buffer, int offset, int count);
+  /// <summary>
+  /// データを受信する（ストリームから読み取る）
+  /// </summary>
+  Task<int> ReceiveAsync(byte[] buffer, int offset, int count);
 }
 
 

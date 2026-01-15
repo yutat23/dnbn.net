@@ -5,15 +5,15 @@ namespace Dnbn.Core;
 /// </summary>
 public interface ITcpMessengerFactory
 {
-    /// <summary>
-    /// サーバーを作成
-    /// </summary>
-    ITcpServer CreateServer(string name);
+  /// <summary>
+  /// サーバーを作成
+  /// </summary>
+  ITcpServer CreateServer(string name);
 
-    /// <summary>
-    /// クライアントを作成
-    /// </summary>
-    ITcpClient CreateClient(string name);
+  /// <summary>
+  /// クライアントを作成
+  /// </summary>
+  ITcpClient CreateClient(string name);
 }
 
 

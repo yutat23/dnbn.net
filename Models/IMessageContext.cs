@@ -5,20 +5,20 @@ namespace Dnbn.Models;
 /// </summary>
 public interface IMessageContext
 {
-    /// <summary>
-    /// セッション情報
-    /// </summary>
-    SessionInfo? SessionInfo { get; }
+  /// <summary>
+  /// セッション情報
+  /// </summary>
+  SessionInfo? SessionInfo { get; }
 
-    /// <summary>
-    /// 送信元がサーバーかクライアントか
-    /// </summary>
-    bool IsServerSide { get; }
+  /// <summary>
+  /// 送信元がサーバーかクライアントか
+  /// </summary>
+  bool IsServerSide { get; }
 
-    /// <summary>
-    /// 追加のコンテキストデータ
-    /// </summary>
-    Dictionary<string, object> Properties { get; }
+  /// <summary>
+  /// 追加のコンテキストデータ
+  /// </summary>
+  Dictionary<string, object> Properties { get; }
 }
 
 

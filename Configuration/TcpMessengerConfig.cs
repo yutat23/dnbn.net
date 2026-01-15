@@ -5,15 +5,15 @@ namespace Dnbn.Configuration;
 /// </summary>
 public class TcpMessengerConfig
 {
-    /// <summary>
-    /// サーバー設定リスト
-    /// </summary>
-    public List<ServerConfig> Servers { get; set; } = new();
+  /// <summary>
+  /// サーバー設定リスト
+  /// </summary>
+  public List<ServerConfig> Servers { get; set; } = new();
 
-    /// <summary>
-    /// クライアント設定リスト
-    /// </summary>
-    public List<ClientConfig> Clients { get; set; } = new();
+  /// <summary>
+  /// クライアント設定リスト
+  /// </summary>
+  public List<ClientConfig> Clients { get; set; } = new();
 }
 
 
