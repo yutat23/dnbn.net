@@ -22,9 +22,12 @@ public class TcpClient : ITcpClient
     private readonly Subject<Message> _messageReceivedSubject = new();
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<Message>> _pendingRequests = new();
     private System.Timers.Timer? _keepAliveTimer;
-    private readonly CancellationTokenSource _cancellationTokenSource = new();
+    private CancellationTokenSource _cancellationTokenSource = new();
     private bool _disposed = false;
     private TaskCompletionSource<Message>? _keepAliveResponseTcs;
+    private bool _isIntentionalDisconnect = false;
+    private Task? _reconnectTask;
+    private readonly object _reconnectLock = new();
 
     public string Name => _config.Name;
     public bool IsConnected => _transport.IsConnected;
@@ -63,18 +66,46 @@ public class TcpClient : ITcpClient
         if (IsConnected)
             return;
 
-        await _transport.ConnectAsync();
-        _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
-
-        OnConnected?.Invoke(this, EventArgs.Empty);
-
-        // 受信ループを開始
-        _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
-
-        // キープアライブを開始
-        if (_config.KeepAlive?.Enabled == true)
+        // 接続リトライポリシーが設定されている場合は、リトライを実行
+        if (_config.ConnectionRetryPolicy != null)
         {
-            StartKeepAlive();
+            await RetryHelper.ExecuteConnectionRetryAsync(
+                async () =>
+                {
+                    await _transport.ConnectAsync();
+                    _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
+
+                    OnConnected?.Invoke(this, EventArgs.Empty);
+
+                    // 受信ループを開始
+                    _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
+
+                    // キープアライブを開始
+                    if (_config.KeepAlive?.Enabled == true)
+                    {
+                        StartKeepAlive();
+                    }
+                },
+                _config.ConnectionRetryPolicy,
+                _cancellationTokenSource.Token,
+                _logger);
+        }
+        else
+        {
+            // リトライポリシーが設定されていない場合は、従来通り1回だけ試行
+            await _transport.ConnectAsync();
+            _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
+
+            OnConnected?.Invoke(this, EventArgs.Empty);
+
+            // 受信ループを開始
+            _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
+
+            // キープアライブを開始
+            if (_config.KeepAlive?.Enabled == true)
+            {
+                StartKeepAlive();
+            }
         }
     }
 
@@ -82,6 +113,8 @@ public class TcpClient : ITcpClient
     {
         if (!IsConnected)
             return;
+
+        _isIntentionalDisconnect = isIntentional;
 
         _keepAliveTimer?.Stop();
         _keepAliveTimer?.Dispose();
@@ -111,6 +144,7 @@ public class TcpClient : ITcpClient
     private async Task ReceiveLoopAsync()
     {
         var buffer = new byte[4096];
+        bool wasNetworkError = false;
 
         while (!_cancellationTokenSource.Token.IsCancellationRequested && IsConnected)
         {
@@ -119,7 +153,8 @@ public class TcpClient : ITcpClient
                 var bytesRead = await _transport.ReceiveAsync(buffer, 0, buffer.Length);
                 if (bytesRead == 0)
                 {
-                    // 接続が閉じられた
+                    // 接続が閉じられた（NW障害）
+                    wasNetworkError = !_isIntentionalDisconnect;
                     break;
                 }
 
@@ -172,6 +207,8 @@ public class TcpClient : ITcpClient
             }
             catch (OperationCanceledException)
             {
+                // 意図的な切断
+                wasNetworkError = false;
                 break;
             }
             catch (Exception ex)
@@ -181,6 +218,13 @@ public class TcpClient : ITcpClient
                 {
                     _logger?.LogError(ex, "Error receiving data in client {Name}", Name);
                     OnError?.Invoke(this, ex);
+                    // NW障害として扱う
+                    wasNetworkError = !_isIntentionalDisconnect;
+                }
+                else
+                {
+                    // 意図的な切断
+                    wasNetworkError = false;
                 }
                 break;
             }
@@ -189,7 +233,98 @@ public class TcpClient : ITcpClient
         if (IsConnected)
         {
             // NW障害による切断として扱う
-            await DisconnectAsync(isIntentional: false);
+            await DisconnectAsync(isIntentional: !wasNetworkError);
+        }
+
+        // NW障害による切断の場合、自動再接続を試行
+        // 注意: DisconnectAsyncで_cancellationTokenSourceがキャンセルされるため、
+        // 再接続時には新しいCancellationTokenSourceが必要
+        if (wasNetworkError && _config.ConnectionRetryPolicy != null)
+        {
+            _logger?.LogInformation("TCP Client '{Name}' will attempt automatic reconnection...", Name);
+            StartAutoReconnect();
+        }
+    }
+
+    /// <summary>
+    /// 自動再接続を開始
+    /// </summary>
+    private void StartAutoReconnect()
+    {
+        lock (_reconnectLock)
+        {
+            // 既に再接続タスクが実行中の場合は、新しいタスクを開始しない
+            if (_reconnectTask != null && !_reconnectTask.IsCompleted)
+            {
+                return;
+            }
+
+            _reconnectTask = Task.Run(async () =>
+            {
+                try
+                {
+                    _logger?.LogInformation("TCP Client '{Name}' attempting automatic reconnection...", Name);
+
+                    // 再接続用のCancellationTokenSourceを作成
+                    // 元の_cancellationTokenSourceはDisconnectAsyncでキャンセルされているため、
+                    // 再接続処理では新しいトークンを使用する
+                    using var reconnectCts = new CancellationTokenSource();
+
+                    _logger?.LogDebug("TCP Client '{Name}' starting connection retry with policy: MaxRetryCount={MaxRetryCount}", 
+                        Name, _config.ConnectionRetryPolicy?.MaxRetryCount ?? -1);
+
+                    await RetryHelper.ExecuteConnectionRetryAsync(
+                        async () =>
+                        {
+                            // 既に接続されている場合は何もしない
+                            if (IsConnected)
+                            {
+                                return;
+                            }
+
+                            // トランスポートを再接続
+                            await _transport.ConnectAsync();
+                            _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
+
+                            // 新しいCancellationTokenSourceを作成（前のものはキャンセル済み）
+                            lock (_reconnectLock)
+                            {
+                                if (_cancellationTokenSource.IsCancellationRequested)
+                                {
+                                    var oldCts = _cancellationTokenSource;
+                                    _cancellationTokenSource = new CancellationTokenSource();
+                                    oldCts.Dispose();
+                                }
+                            }
+
+                            // 意図的切断フラグをリセット
+                            _isIntentionalDisconnect = false;
+
+                            OnConnected?.Invoke(this, EventArgs.Empty);
+
+                            // 受信ループを再開
+                            _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
+
+                            // キープアライブを再開
+                            if (_config.KeepAlive?.Enabled == true)
+                            {
+                                StartKeepAlive();
+                            }
+                        },
+                        _config.ConnectionRetryPolicy,
+                        reconnectCts.Token,
+                        _logger);
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger?.LogInformation("TCP Client '{Name}' reconnection cancelled", Name);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex, "TCP Client '{Name}' automatic reconnection failed", Name);
+                    OnError?.Invoke(this, ex);
+                }
+            });
         }
     }
 
@@ -229,7 +364,8 @@ public class TcpClient : ITcpClient
                 async () => await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout),
                 _config.RetryPolicy,
                 responsePredicate,
-                _cancellationTokenSource.Token);
+                _cancellationTokenSource.Token,
+                _logger);
         }
 
         return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout);

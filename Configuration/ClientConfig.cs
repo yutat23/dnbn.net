@@ -31,9 +31,14 @@ public class ClientConfig
     public string? MessageTerminator { get; set; }
 
     /// <summary>
-    /// リトライポリシー
+    /// リトライポリシー（メッセージ送信用）
     /// </summary>
     public RetryPolicy? RetryPolicy { get; set; }
+
+    /// <summary>
+    /// 接続リトライポリシー（接続失敗時およびNW障害時の自動再接続用）
+    /// </summary>
+    public RetryPolicy? ConnectionRetryPolicy { get; set; }
 
     /// <summary>
     /// タイムアウト（ミリ秒）

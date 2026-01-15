@@ -37,6 +37,11 @@ public class RetryPolicy
     public int InitialDelayMs { get; set; } = 500;
 
     /// <summary>
+    /// 最大待機時間（ミリ秒）。指数バックオフ時の上限値。デフォルト: 60000ms（60秒）
+    /// </summary>
+    public int MaxDelayMs { get; set; } = 60000;
+
+    /// <summary>
     /// タイムアウト時に失敗とするか
     /// </summary>
     public bool FailOnTimeout { get; set; } = true;
@@ -51,12 +56,15 @@ public class RetryPolicy
     /// </summary>
     public int GetDelayMs(int retryCount)
     {
-        return RetryDelayStrategy switch
+        var delay = RetryDelayStrategy switch
         {
             RetryDelayStrategy.Fixed => InitialDelayMs,
             RetryDelayStrategy.Exponential => InitialDelayMs * (int)Math.Pow(2, retryCount),
             _ => InitialDelayMs
         };
+
+        // MaxDelayMsを上限として適用
+        return Math.Min(delay, MaxDelayMs);
     }
 }
 

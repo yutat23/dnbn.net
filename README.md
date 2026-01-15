@@ -12,6 +12,7 @@
 - メッセージ受信イベント（IObservable/イベントデリゲート対応）
 - 送信後の応答待ち（Promise的制御）
 - リトライポリシー、フィルターパイプライン対応
+- 接続リトライ機能（接続失敗時およびNW障害時の自動再接続、無限リトライ対応）
 - キープアライブ機能（定期的なメッセージ送信で接続維持）
 - 複数クライアントを同一ポートで受信可能
 - appsettings.json統合設定
@@ -47,8 +48,15 @@ dotnet add package dnbn.net
           "MaxRetryCount": 3,
           "RetryDelayStrategy": "Exponential",
           "InitialDelayMs": 500,
+          "MaxDelayMs": 30000,
           "FailOnTimeout": true,
           "FailOnErrorResponse": true
+        },
+        "ConnectionRetryPolicy": {
+          "MaxRetryCount": -1,
+          "RetryDelayStrategy": "Exponential",
+          "InitialDelayMs": 1000,
+          "MaxDelayMs": 60000
         },
         "TimeoutMilliseconds": 5000,
         "KeepAlive": {
@@ -210,7 +218,77 @@ public class LoggingFilter : IMessageFilter
 services.AddSingleton<IMessageFilter, LoggingFilter>();
 ```
 
-### 8. log4netとの統合
+### 8. 接続リトライ機能
+
+接続失敗時やNW障害時に自動的にリトライする機能です。`ConnectionRetryPolicy`を設定することで、接続の確立と維持を自動化できます。
+
+#### 設定例
+
+```json
+{
+  "TcpMessenger": {
+    "Clients": [
+      {
+        "Name": "ControllerA",
+        "RemoteHost": "192.168.1.10",
+        "RemotePort": 7000,
+        "ConnectionRetryPolicy": {
+          "MaxRetryCount": -1,  // -1 で無限リトライ、正の値で指定回数リトライ
+          "RetryDelayStrategy": "Exponential",  // "Fixed" または "Exponential"
+          "InitialDelayMs": 1000,  // 初期待機時間（ミリ秒）
+          "MaxDelayMs": 60000  // 最大待機時間（ミリ秒）。指数バックオフ時の上限
+        }
+      }
+    ]
+  }
+}
+```
+
+#### 動作
+
+- **接続時のリトライ**: `ConnectAsync()`呼び出し時に接続に失敗した場合、`ConnectionRetryPolicy`に基づいて自動的にリトライします
+- **NW障害時の自動再接続**: 通信中にNW障害が発生した場合、自動的に再接続を試行します
+- **無限リトライ**: `MaxRetryCount = -1`に設定すると、接続成功まで永続的にリトライを続けます
+- **指数バックオフ**: `RetryDelayStrategy = "Exponential"`の場合、リトライ間隔が指数関数的に増加します（`MaxDelayMs`で上限が設定されます）
+
+#### リトライ遅延の計算
+
+- **Fixed（固定遅延）**: 常に`InitialDelayMs`の待機時間
+- **Exponential（指数バックオフ）**: `InitialDelayMs * 2^retryCount`で計算され、`MaxDelayMs`を上限として適用
+
+**例**（`InitialDelayMs = 1000`, `MaxDelayMs = 60000`）:
+- 1回目: 1秒
+- 2回目: 2秒
+- 3回目: 4秒
+- 4回目: 8秒
+- 5回目: 16秒
+- 6回目: 32秒
+- 7回目以降: 60秒（`MaxDelayMs`で上限）
+
+#### メッセージ送信時のリトライ
+
+メッセージ送信時のリトライは`RetryPolicy`で設定します。こちらも`MaxDelayMs`を設定することで、指数バックオフの上限を制御できます。
+
+```json
+{
+  "RetryPolicy": {
+    "MaxRetryCount": 3,
+    "RetryDelayStrategy": "Exponential",
+    "InitialDelayMs": 500,
+    "MaxDelayMs": 30000,  // メッセージ送信時の最大待機時間
+    "FailOnTimeout": true,
+    "FailOnErrorResponse": true
+  }
+}
+```
+
+#### 注意事項
+
+- 意図的な切断（`DisconnectAsync(true)`）の場合は自動再接続しません
+- 無限リトライ（`MaxRetryCount = -1`）の場合、アプリケーション終了まで接続を試行し続けます
+- ログにリトライ試行回数とエラー内容が記録されます
+
+### 9. log4netとの統合
 
 このライブラリはlog4netと統合できます。アプリ側でlog4netを使用している場合、その設定に合わせてログ出力されます。
 
