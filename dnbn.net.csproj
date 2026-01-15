@@ -11,7 +11,8 @@
     <Authors>dnbn.net</Authors>
     <Description>TCP独自伝聞ライブラリ - 柔軟なプロトコル対応、サーバー/クライアント統合、Promise的制御</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
