@@ -398,17 +398,33 @@ public class LoggingFilter : IMessageFilter
 {
   private readonly ILogger<LoggingFilter>? _logger;
 
+  /// <summary>
+  /// コンストラクタ
+  /// </summary>
+  /// <param name="loggerFactory">ロガーファクトリー（オプション）</param>
   public LoggingFilter(ILoggerFactory? loggerFactory = null)
   {
     _logger = loggerFactory?.CreateLogger<LoggingFilter>();
   }
 
+  /// <summary>
+  /// 送信前のメッセージを処理
+  /// </summary>
+  /// <param name="msg">送信するメッセージ</param>
+  /// <param name="ctx">メッセージコンテキスト</param>
+  /// <returns>処理後のメッセージ</returns>
   public Task<Message> OnSendingAsync(Message msg, IMessageContext ctx)
   {
     _logger?.LogDebug("[Filter] 送信前: {Message}", msg.Text?.Trim());
     return Task.FromResult(msg);
   }
 
+  /// <summary>
+  /// 受信後のメッセージを処理
+  /// </summary>
+  /// <param name="msg">受信したメッセージ</param>
+  /// <param name="ctx">メッセージコンテキスト</param>
+  /// <returns>処理後のメッセージ</returns>
   public Task<Message> OnReceivedAsync(Message msg, IMessageContext ctx)
   {
     _logger?.LogDebug("[Filter] 受信後: {Message}", msg.Text?.Trim());

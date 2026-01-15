@@ -58,9 +58,12 @@ public class TcpClient : ITcpClient
         config.FixedHeaderLength,
         config.FixedBodyLength,
         config.LengthFieldOffset,
-        config.LengthFieldLength);
+        config.LengthFieldLength    );
   }
 
+  /// <summary>
+  /// サーバーに接続
+  /// </summary>
   public async Task ConnectAsync()
   {
     if (IsConnected)
@@ -111,6 +114,10 @@ public class TcpClient : ITcpClient
     }
   }
 
+  /// <summary>
+  /// サーバーから切断
+  /// </summary>
+  /// <param name="isIntentional">意図的な切断かどうか</param>
   public async Task DisconnectAsync(bool isIntentional = true)
   {
     if (!IsConnected)
@@ -332,6 +339,10 @@ public class TcpClient : ITcpClient
     }
   }
 
+  /// <summary>
+  /// メッセージを送信（応答を待たない）
+  /// </summary>
+  /// <param name="message">送信するメッセージ</param>
   public async Task SendAsync(Message message)
   {
     if (!IsConnected)
@@ -350,6 +361,12 @@ public class TcpClient : ITcpClient
     await _transport.SendAsync(filteredMessage.RawData);
   }
 
+  /// <summary>
+  /// メッセージを送信して応答を待つ
+  /// </summary>
+  /// <param name="message">送信するメッセージ</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <returns>受信した応答メッセージ</returns>
   public async Task<Message> SendAsync(Message message, TimeSpan timeout)
   {
     return await SendAndWaitAsync(message, _ => true, timeout);
@@ -548,6 +565,9 @@ public class TcpClient : ITcpClient
     };
   }
 
+  /// <summary>
+  /// リソースを解放
+  /// </summary>
   public void Dispose()
   {
     if (_disposed)

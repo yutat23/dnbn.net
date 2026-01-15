@@ -18,6 +18,15 @@ public class MessageParser
 
   private readonly List<byte> _buffer = new();
 
+  /// <summary>
+  /// コンストラクタ
+  /// </summary>
+  /// <param name="encoding">文字エンコーディング</param>
+  /// <param name="messageTerminator">メッセージ終端文字（オプション）</param>
+  /// <param name="fixedHeaderLength">固定長ヘッダーの長さ（オプション）</param>
+  /// <param name="fixedBodyLength">固定長ボディの長さ（オプション）</param>
+  /// <param name="lengthFieldOffset">長さフィールドのオフセット（オプション）</param>
+  /// <param name="lengthFieldLength">長さフィールドの長さ（オプション）</param>
   public MessageParser(
       Encoding encoding,
       string? messageTerminator = null,

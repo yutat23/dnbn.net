@@ -14,6 +14,12 @@ public class TcpMessengerFactory : ITcpMessengerFactory
   private readonly ILoggerFactory? _loggerFactory;
   private readonly IEnumerable<IMessageFilter> _filters;
 
+  /// <summary>
+  /// コンストラクタ
+  /// </summary>
+  /// <param name="config">TCP Messenger設定</param>
+  /// <param name="loggerFactory">ロガーファクトリー（オプション）</param>
+  /// <param name="filters">メッセージフィルター（オプション）</param>
   public TcpMessengerFactory(
       IOptions<TcpMessengerConfig> config,
       ILoggerFactory? loggerFactory = null,
@@ -24,6 +30,11 @@ public class TcpMessengerFactory : ITcpMessengerFactory
     _filters = filters ?? Enumerable.Empty<IMessageFilter>();
   }
 
+  /// <summary>
+  /// サーバーインスタンスを作成
+  /// </summary>
+  /// <param name="name">サーバー設定名</param>
+  /// <returns>サーバーインスタンス</returns>
   public ITcpServer CreateServer(string name)
   {
     var serverConfig = _config.Servers.FirstOrDefault(s => s.Name == name)
@@ -33,6 +44,11 @@ public class TcpMessengerFactory : ITcpMessengerFactory
     return new TcpServer(serverConfig, logger, _filters);
   }
 
+  /// <summary>
+  /// クライアントインスタンスを作成
+  /// </summary>
+  /// <param name="name">クライアント設定名</param>
+  /// <returns>クライアントインスタンス</returns>
   public ITcpClient CreateClient(string name)
   {
     var clientConfig = _config.Clients.FirstOrDefault(c => c.Name == name)

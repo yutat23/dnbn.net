@@ -24,16 +24,47 @@ public class TcpServer : ITcpServer
   private readonly CancellationTokenSource _cancellationTokenSource = new();
   private bool _disposed = false;
 
+  /// <summary>
+  /// サーバー名
+  /// </summary>
   public string Name => _config.Name;
+
+  /// <summary>
+  /// 実行状態
+  /// </summary>
   public bool IsRunning => _listener != null;
 
+  /// <summary>
+  /// メッセージ受信イベント
+  /// </summary>
   public event EventHandler<(Message message, SessionInfo sessionInfo)>? OnMessageReceived;
+
+  /// <summary>
+  /// クライアント接続イベント
+  /// </summary>
   public event EventHandler<SessionInfo>? OnClientConnected;
+
+  /// <summary>
+  /// クライアント切断イベント
+  /// </summary>
   public event EventHandler<SessionInfo>? OnClientDisconnected;
+
+  /// <summary>
+  /// エラーイベント
+  /// </summary>
   public event EventHandler<(Exception exception, SessionInfo? sessionInfo)>? OnError;
 
+  /// <summary>
+  /// メッセージ受信のObservable
+  /// </summary>
   public IObservable<(Message message, SessionInfo sessionInfo)> MessageReceived => _messageReceivedSubject;
 
+  /// <summary>
+  /// コンストラクタ
+  /// </summary>
+  /// <param name="config">サーバー設定</param>
+  /// <param name="logger">ロガー（オプション）</param>
+  /// <param name="filters">メッセージフィルター（オプション）</param>
   public TcpServer(ServerConfig config, ILogger<TcpServer>? logger = null, IEnumerable<IMessageFilter>? filters = null)
   {
     _config = config;
@@ -41,6 +72,9 @@ public class TcpServer : ITcpServer
     _filters = filters?.ToList() ?? new List<IMessageFilter>();
   }
 
+  /// <summary>
+  /// サーバーを起動
+  /// </summary>
   public async Task StartAsync()
   {
     if (IsRunning)
@@ -55,6 +89,9 @@ public class TcpServer : ITcpServer
     _ = Task.Run(AcceptClientsAsync, _cancellationTokenSource.Token);
   }
 
+  /// <summary>
+  /// サーバーを停止
+  /// </summary>
   public async Task StopAsync()
   {
     if (!IsRunning)
@@ -145,6 +182,11 @@ public class TcpServer : ITcpServer
     return $"{endPoint.Address}:{endPoint.Port}-{Guid.NewGuid():N}";
   }
 
+  /// <summary>
+  /// 指定セッションにメッセージを送信
+  /// </summary>
+  /// <param name="sessionId">セッションID</param>
+  /// <param name="message">送信するメッセージ</param>
   public async Task SendAsync(string sessionId, Message message)
   {
     if (_sessions.TryGetValue(sessionId, out var session))
@@ -157,22 +199,38 @@ public class TcpServer : ITcpServer
     }
   }
 
+  /// <summary>
+  /// 全セッションにメッセージをブロードキャスト
+  /// </summary>
+  /// <param name="message">送信するメッセージ</param>
   public async Task BroadcastAsync(Message message)
   {
     var tasks = _sessions.Values.Select(s => s.SendAsync(message));
     await Task.WhenAll(tasks);
   }
 
+  /// <summary>
+  /// 指定セッションの情報を取得
+  /// </summary>
+  /// <param name="sessionId">セッションID</param>
+  /// <returns>セッション情報（見つからない場合はnull）</returns>
   public SessionInfo? GetSession(string sessionId)
   {
     return _sessions.TryGetValue(sessionId, out var session) ? session.SessionInfo : null;
   }
 
+  /// <summary>
+  /// 全セッションの情報を取得
+  /// </summary>
+  /// <returns>全セッション情報の列挙</returns>
   public IEnumerable<SessionInfo> GetAllSessions()
   {
     return _sessions.Values.Select(s => s.SessionInfo);
   }
 
+  /// <summary>
+  /// リソースを解放
+  /// </summary>
   public void Dispose()
   {
     if (_disposed)
