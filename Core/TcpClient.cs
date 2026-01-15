@@ -21,9 +21,10 @@ public class TcpClient : ITcpClient
     private readonly MessageParser _parser;
     private readonly Subject<Message> _messageReceivedSubject = new();
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<Message>> _pendingRequests = new();
-    private System.Timers.Timer? _healthCheckTimer;
+    private System.Timers.Timer? _keepAliveTimer;
     private readonly CancellationTokenSource _cancellationTokenSource = new();
     private bool _disposed = false;
+    private TaskCompletionSource<Message>? _keepAliveResponseTcs;
 
     public string Name => _config.Name;
     public bool IsConnected => _transport.IsConnected;
@@ -32,6 +33,7 @@ public class TcpClient : ITcpClient
     public event EventHandler? OnConnected;
     public event EventHandler? OnDisconnected;
     public event EventHandler<Exception>? OnError;
+    public event EventHandler<Message>? OnKeepAliveResponseReceived;
 
     public IObservable<Message> MessageReceived => _messageReceivedSubject;
 
@@ -69,10 +71,10 @@ public class TcpClient : ITcpClient
         // 受信ループを開始
         _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
 
-        // ヘルスチェックを開始
-        if (_config.HealthCheck?.Enabled == true)
+        // キープアライブを開始
+        if (_config.KeepAlive?.Enabled == true)
         {
-            StartHealthCheck();
+            StartKeepAlive();
         }
     }
 
@@ -81,9 +83,9 @@ public class TcpClient : ITcpClient
         if (!IsConnected)
             return;
 
-        _healthCheckTimer?.Stop();
-        _healthCheckTimer?.Dispose();
-        _healthCheckTimer = null;
+        _keepAliveTimer?.Stop();
+        _keepAliveTimer?.Dispose();
+        _keepAliveTimer = null;
 
         _cancellationTokenSource.Cancel();
         await _transport.DisconnectAsync();
@@ -128,17 +130,29 @@ public class TcpClient : ITcpClient
                         filteredMessage = await filter.OnReceivedAsync(filteredMessage, ctx);
                     }
 
-                    // 待機中のリクエストをチェック
+                    // キープアライブ応答をチェック（優先的に処理）
                     bool handled = false;
-                    foreach (var kvp in _pendingRequests.ToList())
+                    var keepAliveTcs = Interlocked.Exchange(ref _keepAliveResponseTcs, null);
+                    if (keepAliveTcs != null)
                     {
-                        // 最初の待機中のリクエストにメッセージを渡す
-                        // 応答条件のチェックはSendAndWaitAsync側で行う
-                        if (_pendingRequests.TryRemove(kvp.Key, out var tcs))
+                        keepAliveTcs.TrySetResult(filteredMessage);
+                        OnKeepAliveResponseReceived?.Invoke(this, filteredMessage);
+                        handled = true;
+                    }
+
+                    // 待機中のリクエストをチェック
+                    if (!handled)
+                    {
+                        foreach (var kvp in _pendingRequests.ToList())
                         {
-                            tcs.TrySetResult(filteredMessage);
-                            handled = true;
-                            break;
+                            // 最初の待機中のリクエストにメッセージを渡す
+                            // 応答条件のチェックはSendAndWaitAsync側で行う
+                            if (_pendingRequests.TryRemove(kvp.Key, out var tcs))
+                            {
+                                tcs.TrySetResult(filteredMessage);
+                                handled = true;
+                                break;
+                            }
                         }
                     }
 
@@ -181,6 +195,11 @@ public class TcpClient : ITcpClient
         }
 
         await _transport.SendAsync(filteredMessage.RawData);
+    }
+
+    public async Task<Message> SendAsync(Message message, TimeSpan timeout)
+    {
+        return await SendAndWaitAsync(message, _ => true, timeout);
     }
 
     public async Task<Message> SendAndWaitAsync(
@@ -271,29 +290,91 @@ public class TcpClient : ITcpClient
         }
     }
 
-    private void StartHealthCheck()
+    private void StartKeepAlive()
     {
-        if (_config.HealthCheck == null)
+        if (_config.KeepAlive == null)
             return;
 
-        _healthCheckTimer = new System.Timers.Timer(_config.HealthCheck.IntervalSeconds * 1000);
-        _healthCheckTimer.Elapsed += async (sender, e) =>
+        _keepAliveTimer = new System.Timers.Timer(_config.KeepAlive.IntervalSeconds * 1000);
+        _keepAliveTimer.Elapsed += async (sender, e) =>
         {
             if (IsConnected && !_disposed)
             {
                 try
                 {
-                    var healthMessage = Message.FromString(_config.HealthCheck.Message, GetEncoding(_config.Encoding));
-                    await SendAsync(healthMessage);
+                    var keepAliveMessage = Message.FromString(_config.KeepAlive.Message, GetEncoding(_config.Encoding));
+                    await SendKeepAliveAsync(keepAliveMessage, TimeSpan.FromSeconds(_config.KeepAlive.IntervalSeconds));
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(ex, "Health check failed for client {Name}", Name);
+                    _logger?.LogError(ex, "Keep-alive failed for client {Name}", Name);
                 }
             }
         };
-        _healthCheckTimer.AutoReset = true;
-        _healthCheckTimer.Start();
+        _keepAliveTimer.AutoReset = true;
+        _keepAliveTimer.Start();
+    }
+
+    /// <summary>
+    /// キープアライブ専用の送信・応答待ちメソッド
+    /// 通常のリクエスト応答と混在しないように、専用のTaskCompletionSourceを使用
+    /// </summary>
+    private async Task SendKeepAliveAsync(Message keepAliveMessage, TimeSpan timeout)
+    {
+        if (!IsConnected)
+            return;
+
+        // フィルターパイプラインを適用
+        var filteredMessage = keepAliveMessage;
+        foreach (var filter in _filters)
+        {
+            var ctx = new MessageContext(null, false);
+            filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
+        }
+
+        // キープアライブ応答用のTaskCompletionSourceを作成
+        var tcs = new TaskCompletionSource<Message>();
+        var previousTcs = Interlocked.Exchange(ref _keepAliveResponseTcs, tcs);
+        
+        // 前のキープアライブがまだ待機中の場合はキャンセル
+        if (previousTcs != null)
+        {
+            previousTcs.TrySetCanceled();
+        }
+
+        try
+        {
+            // 送信
+            await _transport.SendAsync(filteredMessage.RawData);
+
+            // タイムアウト用のキャンセレーショントークン
+            using var cts = new CancellationTokenSource(timeout);
+            cts.Token.Register(() =>
+            {
+                if (Interlocked.CompareExchange(ref _keepAliveResponseTcs, null, tcs) == tcs)
+                {
+                    tcs.TrySetCanceled();
+                }
+            });
+
+            // 応答を待つ（タイムアウトは無視して続行）
+            try
+            {
+                var response = await tcs.Task;
+                // 応答はReceiveLoopAsyncでOnKeepAliveResponseReceivedイベントが発行される
+            }
+            catch (TaskCanceledException)
+            {
+                // タイムアウトは無視（キープアライブは継続）
+                _logger?.LogWarning("Keep-alive response timeout for client {Name}", Name);
+            }
+        }
+        catch (Exception)
+        {
+            // エラーが発生した場合はTaskCompletionSourceをクリア
+            Interlocked.CompareExchange(ref _keepAliveResponseTcs, null, tcs);
+            throw;
+        }
     }
 
     private Encoding GetEncoding(string encodingName)
@@ -315,7 +396,7 @@ public class TcpClient : ITcpClient
         DisconnectAsync().GetAwaiter().GetResult();
         _cancellationTokenSource.Dispose();
         _messageReceivedSubject.Dispose();
-        _healthCheckTimer?.Dispose();
+        _keepAliveTimer?.Dispose();
         _disposed = true;
     }
 

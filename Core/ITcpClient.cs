@@ -40,6 +40,11 @@ public interface ITcpClient : IDisposable
     event EventHandler<Exception>? OnError;
 
     /// <summary>
+    /// キープアライブ応答受信イベント
+    /// </summary>
+    event EventHandler<Message>? OnKeepAliveResponseReceived;
+
+    /// <summary>
     /// メッセージ受信のObservable
     /// </summary>
     IObservable<Message> MessageReceived { get; }
@@ -58,6 +63,11 @@ public interface ITcpClient : IDisposable
     /// メッセージを送信する
     /// </summary>
     Task SendAsync(Message message);
+
+    /// <summary>
+    /// メッセージを送信して応答を待つ（簡易版：すべての応答を受け入れる）
+    /// </summary>
+    Task<Message> SendAsync(Message message, TimeSpan timeout);
 
     /// <summary>
     /// メッセージを送信して応答を待つ

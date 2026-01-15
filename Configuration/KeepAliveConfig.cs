@@ -1,25 +1,22 @@
 namespace Dnbn.Configuration;
 
 /// <summary>
-/// ヘルスチェック設定
+/// キープアライブ設定
 /// </summary>
-public class HealthCheckConfig
+public class KeepAliveConfig
 {
     /// <summary>
-    /// ヘルスチェックを有効にするか
+    /// キープアライブを有効にするか
     /// </summary>
     public bool Enabled { get; set; } = false;
 
     /// <summary>
-    /// ヘルスチェック間隔（秒）
+    /// キープアライブ間隔（秒）
     /// </summary>
     public int IntervalSeconds { get; set; } = 30;
 
     /// <summary>
-    /// ヘルスチェックメッセージ
+    /// キープアライブメッセージ
     /// </summary>
     public string Message { get; set; } = string.Empty;
 }
-
-
-

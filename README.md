@@ -12,6 +12,7 @@
 - メッセージ受信イベント（IObservable/イベントデリゲート対応）
 - 送信後の応答待ち（Promise的制御）
 - リトライポリシー、フィルターパイプライン対応
+- キープアライブ機能（定期的なメッセージ送信で接続維持）
 - 複数クライアントを同一ポートで受信可能
 - appsettings.json統合設定
 
@@ -50,7 +51,7 @@ dotnet add package dnbn.net
           "FailOnErrorResponse": true
         },
         "TimeoutMilliseconds": 5000,
-        "HealthCheck": {
+        "KeepAlive": {
           "Enabled": true,
           "IntervalSeconds": 30,
           "Message": "PING\r"
@@ -126,6 +127,13 @@ client.OnConnected += (sender, args) =>
 client.OnDisconnected += (sender, args) =>
 {
     Console.WriteLine("Disconnected from server");
+};
+
+// キープアライブ応答イベントの処理
+client.OnKeepAliveResponseReceived += (sender, message) =>
+{
+    Console.WriteLine($"Keep-alive response: {message.Text}");
+    // 状態取得コマンドの応答を使用して処理を行う例
 };
 
 await client.ConnectAsync();

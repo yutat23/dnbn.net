@@ -41,9 +41,9 @@ public class ClientConfig
     public int TimeoutMilliseconds { get; set; } = 5000;
 
     /// <summary>
-    /// ヘルスチェック設定
+    /// キープアライブ設定
     /// </summary>
-    public HealthCheckConfig? HealthCheck { get; set; }
+    public KeepAliveConfig? KeepAlive { get; set; }
 
     /// <summary>
     /// 固定長ヘッダサイズ（バイト）

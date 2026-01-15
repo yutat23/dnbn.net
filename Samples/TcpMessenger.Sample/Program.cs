@@ -1,4 +1,4 @@
-﻿using Dnbn.Core;
+using Dnbn.Core;
 using Dnbn.Extensions;
 using Dnbn.Filters;
 using Dnbn.Models;
@@ -178,6 +178,14 @@ class Program
             logger.LogError(exception, "エラー発生");
         };
 
+        // キープアライブ応答イベントの処理
+        client.OnKeepAliveResponseReceived += (sender, message) =>
+        {
+            logger.LogInformation("[キープアライブ] 応答受信: {Message}", message.Text?.Trim());
+            // 状態取得コマンドの応答を使用して処理を行う例
+            // 例えば、応答内容に基づいて状態を更新するなど
+        };
+
         // Observableパターンの使用例
         client.MessageReceived
             .Where(msg => msg.Text?.StartsWith("ECHO:") == true)
@@ -200,9 +208,10 @@ class Program
 
             try
             {
-                var message = Message.FromString($"{input}\r\n", System.Text.Encoding.UTF8);
-                await client.SendAsync(message);
+                var message = Message.FromString($"{input}".Replace(@"\r","\r"), System.Text.Encoding.UTF8);
+                var response = await client.SendAsync(message, TimeSpan.FromSeconds(5));
                 logger.LogInformation("送信: {Message}", input);
+                logger.LogInformation("応答: {Response}", response.Text?.Trim());
             }
             catch (Exception ex)
             {
@@ -245,29 +254,78 @@ class Program
             logger.LogInformation("[Client] 受信: {Message}", message.Text?.Trim());
         };
 
+        // キープアライブ応答イベントの処理
+        client.OnKeepAliveResponseReceived += (sender, message) =>
+        {
+            logger.LogInformation("[Client] [キープアライブ] 応答受信: {Message}", message.Text?.Trim());
+            // 状態取得コマンドの応答を使用して処理を行う例
+            // 例えば、応答内容に基づいて状態を更新するなど
+        };
+
         await client.ConnectAsync();
         logger.LogInformation("クライアントが接続しました。");
 
-        // Promise的チェーン処理の例
-        Console.WriteLine("\n=== Promise的チェーン処理の例 ===");
+        // キューイング方式のSendAsyncの動作確認
+        Console.WriteLine("\n=== キューイング方式のSendAsyncの動作確認 ===");
+        Console.WriteLine("複数のメッセージを順次送信し、応答が来るまで次のメッセージが待機することを確認します。");
+        Console.WriteLine("OnMessageReceivedイベントは発行されません（応答は戻り値で取得）。\n");
+        
+        try
+        {
+            // イベントハンドラが呼ばれないことを確認するためのカウンター
+            int eventReceivedCount = 0;
+            client.OnMessageReceived += (sender, message) =>
+            {
+                eventReceivedCount++;
+                logger.LogWarning("[イベント] これは表示されないはず: {Message}", message.Text);
+            };
+
+            // 複数のメッセージを順次送信
+            var messages = new[] { "MSG1", "MSG2", "MSG3" };
+            var startTime = DateTime.UtcNow;
+            
+            foreach (var msgText in messages)
+            {
+                var msg = Message.FromString($"{msgText}\r\n", System.Text.Encoding.UTF8);
+                var sendStart = DateTime.UtcNow;
+                var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
+                var sendEnd = DateTime.UtcNow;
+                
+                logger.LogInformation("[送信] {Message} -> [応答] {Response} (所要時間: {Elapsed}ms)", 
+                    msgText, response.Text?.Trim(), (sendEnd - sendStart).TotalMilliseconds);
+            }
+            
+            var totalTime = DateTime.UtcNow - startTime;
+            logger.LogInformation("\n合計所要時間: {TotalTime}ms", totalTime.TotalMilliseconds);
+            logger.LogInformation("OnMessageReceivedイベントが発行された回数: {Count} (0であるべき)", eventReceivedCount);
+            
+            if (eventReceivedCount == 0)
+            {
+                logger.LogInformation("✓ キューイング方式が正常に動作しています（イベントは発行されません）");
+            }
+            else
+            {
+                logger.LogWarning("✗ イベントが発行されています（キューイング方式の応答はイベントを発行しません）");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "キューイング方式のテストでエラーが発生しました");
+        }
+
+        // Promise的チェーン処理の例（SendAsyncを使用）
+        Console.WriteLine("\n=== SendAsyncを使ったチェーン処理の例 ===");
         try
         {
             var initMessage = Message.FromString("INIT\r\n", System.Text.Encoding.UTF8);
             
-            // 最初のリクエストを送信して応答を待つ
-            var firstResponse = await client.SendAndWaitAsync(
-                initMessage, 
-                m => m.Text?.StartsWith("OK:") == true, 
-                TimeSpan.FromSeconds(3));
-            
+            // SendAsyncで送信して応答を待つ
+            var firstResponse = await client.SendAsync(initMessage, TimeSpan.FromSeconds(3));
             logger.LogInformation("初期化応答: {Message}", firstResponse.Text);
             
             // 次のリクエストを送信
             var nextMessage = Message.FromString($"NEXT: {firstResponse.Text}\r\n", System.Text.Encoding.UTF8);
-            var finalResponse = await client.SendAndWaitAsync(
-                nextMessage, 
-                m => m.Text?.StartsWith("OK:") == true, 
-                TimeSpan.FromSeconds(3));
+            var finalResponse = await client.SendAsync(nextMessage, TimeSpan.FromSeconds(3));
             
             logger.LogInformation("最終応答: {Message}", finalResponse.Text);
             logger.LogInformation("チェーン処理が完了しました。");
@@ -277,8 +335,12 @@ class Program
             logger.LogError(ex, "チェーン処理でエラーが発生しました");
         }
 
-        // 対話的なメッセージ送信
-        Console.WriteLine("\nメッセージを入力してください（終了するには 'quit' を入力）:");
+        // 対話的なメッセージ送信（キューイング方式）
+        Console.WriteLine("\n=== 対話的なメッセージ送信（キューイング方式） ===");
+        Console.WriteLine("メッセージを入力してください（終了するには 'quit' を入力）:");
+        Console.WriteLine("複数のメッセージを連続で送信すると、順次処理されます。");
+        Console.WriteLine("応答は戻り値で取得でき、OnMessageReceivedイベントは発行されません。\n");
+        
         while (true)
         {
             var input = Console.ReadLine();
@@ -290,8 +352,18 @@ class Program
 
             try
             {
-                var message = Message.FromString($"{input}\r\n", System.Text.Encoding.UTF8);
-                await client.SendAsync(message);
+                var sendStart = DateTime.UtcNow;
+                var message = Message.FromString($"{input}".Replace(@"\r","\r"), System.Text.Encoding.UTF8);
+                var response = await client.SendAsync(message, TimeSpan.FromSeconds(5));
+                var sendEnd = DateTime.UtcNow;
+                
+                logger.LogInformation("[送信] {Message}", input);
+                logger.LogInformation("[応答] {Response} (所要時間: {Elapsed}ms)", 
+                    response.Text?.Trim(), (sendEnd - sendStart).TotalMilliseconds);
+            }
+            catch (TimeoutException ex)
+            {
+                logger.LogError(ex, "タイムアウト: {Message}", ex.Message);
             }
             catch (Exception ex)
             {
