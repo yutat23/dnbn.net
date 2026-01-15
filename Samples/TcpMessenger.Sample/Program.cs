@@ -1,7 +1,9 @@
-using Dnbn.Core;
+﻿using Dnbn.Core;
 using Dnbn.Extensions;
 using Dnbn.Filters;
+using Dnbn.Logging;
 using Dnbn.Models;
+using log4net.Config;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -24,26 +26,31 @@ class Program
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .Build();
 
+        // log4net設定を読み込む
+        var log4netConfigFile = new FileInfo(Path.Combine(appDirectory, "log4net.config"));
+        if (log4netConfigFile.Exists)
+        {
+            XmlConfigurator.Configure(log4netConfigFile);
+            Console.WriteLine("log4net設定を読み込みました: " + log4netConfigFile.FullName);
+        }
+        else
+        {
+            Console.WriteLine("警告: log4net.configが見つかりません。デフォルト設定を使用します。");
+            XmlConfigurator.Configure();
+        }
+
         // サービスを登録
         var services = new ServiceCollection();
         
-        // ロギングサービスを追加（簡易実装）
-        // 注意: LoggerFactoryクラスはMicrosoft.Extensions.Loggingパッケージに含まれていますが、
-        // パッケージ参照の問題で直接使用できない場合は、簡易実装を使用します
-        var loggerFactory = new SimpleLoggerFactory();
-        services.AddSingleton<ILoggerFactory>(loggerFactory);
-        
-        // ILogger<T>を登録
-        services.AddSingleton(typeof(ILogger<>), typeof(SimpleLogger<>));
-        
-        services.AddTcpMessenger(configuration);
+        // log4netアダプターを使用してTCP Messengerサービスを登録
+        services.AddTcpMessengerWithLog4net(configuration);
 
         // ログフィルターを登録（オプション）
         services.AddSingleton<IMessageFilter, LoggingFilter>();
 
         var serviceProvider = services.BuildServiceProvider();
         var factory = serviceProvider.GetRequiredService<ITcpMessengerFactory>();
-        var logger = serviceProvider.GetService<ILogger<Program>>() ?? new SimpleLogger<Program>(loggerFactory);
+        var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
 
         // モード選択
         Console.WriteLine("モードを選択してください:");
@@ -181,7 +188,7 @@ class Program
         // キープアライブ応答イベントの処理
         client.OnKeepAliveResponseReceived += (sender, message) =>
         {
-            logger.LogInformation("[キープアライブ] 応答受信: {Message}", message.Text?.Trim());
+            logger.LogInformation("[KeepAlive] 応答受信: {Message}", message.Text?.Trim());
             // 状態取得コマンドの応答を使用して処理を行う例
             // 例えば、応答内容に基づいて状態を更新するなど
         };
@@ -219,7 +226,7 @@ class Program
             }
         }
 
-        await client.DisconnectAsync();
+        await client.DisconnectAsync(true);
     }
 
     /// <summary>

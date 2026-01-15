@@ -277,6 +277,8 @@ public class TcpServer : ITcpServer
                 }
             }
 
+            // NW障害による切断として扱う
+            await DisconnectAsync(isIntentional: false);
             OnDisconnected?.Invoke();
         }
 
@@ -298,7 +300,7 @@ public class TcpServer : ITcpServer
             await _stream.FlushAsync();
         }
 
-        public async Task DisconnectAsync()
+        public async Task DisconnectAsync(bool isIntentional = true)
         {
             _cancellationTokenSource.Cancel();
             if (_stream != null)
@@ -307,6 +309,15 @@ public class TcpServer : ITcpServer
                 _stream = null;
             }
             _tcpClient?.Dispose();
+
+            if (isIntentional)
+            {
+                _logger?.LogInformation("Session {SessionId} disconnected", _sessionId);
+            }
+            else
+            {
+                _logger?.LogError("Session {SessionId} disconnected unexpectedly (network error)", _sessionId);
+            }
         }
 
         private Encoding GetEncoding(string encodingName)

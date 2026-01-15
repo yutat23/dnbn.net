@@ -78,7 +78,7 @@ public class TcpClient : ITcpClient
         }
     }
 
-    public async Task DisconnectAsync()
+    public async Task DisconnectAsync(bool isIntentional = true)
     {
         if (!IsConnected)
             return;
@@ -97,7 +97,14 @@ public class TcpClient : ITcpClient
         }
         _pendingRequests.Clear();
 
-        _logger?.LogInformation("TCP Client '{Name}' disconnected", Name);
+        if (isIntentional)
+        {
+            _logger?.LogInformation("TCP Client '{Name}' disconnected", Name);
+        }
+        else
+        {
+            _logger?.LogError("TCP Client '{Name}' disconnected unexpectedly (network error)", Name);
+        }
         OnDisconnected?.Invoke(this, EventArgs.Empty);
     }
 
@@ -169,15 +176,20 @@ public class TcpClient : ITcpClient
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error receiving data in client {Name}", Name);
-                OnError?.Invoke(this, ex);
+                // 意図的な切断の場合はエラーログを出さない
+                if (!_cancellationTokenSource.IsCancellationRequested)
+                {
+                    _logger?.LogError(ex, "Error receiving data in client {Name}", Name);
+                    OnError?.Invoke(this, ex);
+                }
                 break;
             }
         }
 
         if (IsConnected)
         {
-            await DisconnectAsync();
+            // NW障害による切断として扱う
+            await DisconnectAsync(isIntentional: false);
         }
     }
 

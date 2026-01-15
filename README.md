@@ -210,6 +210,88 @@ public class LoggingFilter : IMessageFilter
 services.AddSingleton<IMessageFilter, LoggingFilter>();
 ```
 
+### 8. log4netとの統合
+
+このライブラリはlog4netと統合できます。アプリ側でlog4netを使用している場合、その設定に合わせてログ出力されます。
+
+#### log4netの設定
+
+アプリ側でlog4netを設定します（例：`log4net.config`）：
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<log4net>
+  <appender name="ConsoleAppender" type="log4net.Appender.ConsoleAppender">
+    <layout type="log4net.Layout.PatternLayout">
+      <conversionPattern value="%date [%thread] %level %logger - %message%newline" />
+    </layout>
+  </appender>
+  <appender name="FileAppender" type="log4net.Appender.FileAppender">
+    <file value="logs/dnbn.log" />
+    <appendToFile value="true" />
+    <layout type="log4net.Layout.PatternLayout">
+      <conversionPattern value="%date [%thread] %level %logger - %message%newline" />
+    </layout>
+  </appender>
+  <root>
+    <level value="DEBUG" />
+    <appender-ref ref="ConsoleAppender" />
+    <appender-ref ref="FileAppender" />
+  </root>
+  <logger name="Dnbn.Core.TcpClient">
+    <level value="DEBUG" />
+  </logger>
+  <logger name="Dnbn.Core.TcpServer">
+    <level value="DEBUG" />
+  </logger>
+</log4net>
+```
+
+#### log4netを使用する場合のサービス登録
+
+```csharp
+using Dnbn.Extensions;
+using log4net.Config;
+
+// log4net設定を読み込む
+XmlConfigurator.Configure(new System.IO.FileInfo("log4net.config"));
+
+var services = new ServiceCollection();
+
+// log4netと共にTCP Messengerサービスを登録
+services.AddTcpMessengerWithLog4net(configuration);
+
+var serviceProvider = services.BuildServiceProvider();
+```
+
+#### ログレベル
+
+ライブラリは以下のログレベルを使用します：
+
+- **DEBUG**: 電文受信（メッセージの詳細）
+- **INFO**: 接続（CONNECT）、サーバー起動/停止、意図的な切断
+- **WARN**: キープアライブタイムアウトなど警告
+- **ERROR**: 意図しない切断（NW障害など）、受信エラー、接続エラー
+
+#### 手動でlog4netアダプターを登録する場合
+
+```csharp
+using Dnbn.Logging;
+using Microsoft.Extensions.Logging;
+
+// log4net設定を読み込む
+XmlConfigurator.Configure(new System.IO.FileInfo("log4net.config"));
+
+var services = new ServiceCollection();
+
+// log4netアダプターを手動で登録
+services.AddSingleton(typeof(ILogger<>), typeof(Log4netLoggerAdapter<>));
+services.AddSingleton<ILoggerFactory, Log4netLoggerFactoryAdapter>();
+
+// TCP Messengerサービスを登録
+services.AddTcpMessenger(configuration);
+```
+
 ## サンプルプロジェクト
 
 実際の使用例は `Samples/TcpMessenger.Sample` プロジェクトを参照してください。

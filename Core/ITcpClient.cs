@@ -57,7 +57,8 @@ public interface ITcpClient : IDisposable
     /// <summary>
     /// 切断する
     /// </summary>
-    Task DisconnectAsync();
+    /// <param name="isIntentional">意図的な切断かどうか（デフォルト: true）</param>
+    Task DisconnectAsync(bool isIntentional = true);
 
     /// <summary>
     /// メッセージを送信する
