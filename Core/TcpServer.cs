@@ -361,7 +361,8 @@ public class TcpServer : ITcpServer
         filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
       }
 
-      var data = filteredMessage.RawData;
+      // MessageTerminatorを自動的に追加
+      var data = AppendMessageTerminatorIfNeeded(filteredMessage);
       await _stream.WriteAsync(data);
       await _stream.FlushAsync();
     }
@@ -384,6 +385,38 @@ public class TcpServer : ITcpServer
       {
         _logger?.LogError("Session {SessionId} disconnected unexpectedly (network error)", _sessionId);
       }
+    }
+
+    /// <summary>
+    /// MessageTerminatorが設定されている場合、メッセージに自動的に追加する
+    /// </summary>
+    private byte[] AppendMessageTerminatorIfNeeded(Message message)
+    {
+      if (string.IsNullOrEmpty(_config.MessageTerminator))
+      {
+        return message.RawData;
+      }
+
+      var encoding = GetEncoding(_config.Encoding);
+      var terminatorBytes = encoding.GetBytes(_config.MessageTerminator);
+      
+      // 既に終端文字が含まれているかチェック（末尾に一致するか）
+      if (message.RawData.Length >= terminatorBytes.Length)
+      {
+        var suffix = new byte[terminatorBytes.Length];
+        Array.Copy(message.RawData, message.RawData.Length - terminatorBytes.Length, suffix, 0, terminatorBytes.Length);
+        if (suffix.SequenceEqual(terminatorBytes))
+        {
+          // 既に終端文字が含まれている場合は追加しない
+          return message.RawData;
+        }
+      }
+
+      // 終端文字を追加
+      var result = new byte[message.RawData.Length + terminatorBytes.Length];
+      Array.Copy(message.RawData, 0, result, 0, message.RawData.Length);
+      Array.Copy(terminatorBytes, 0, result, message.RawData.Length, terminatorBytes.Length);
+      return result;
     }
 
     private Encoding GetEncoding(string encodingName)
