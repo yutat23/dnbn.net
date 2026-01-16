@@ -58,7 +58,7 @@ public class TcpClient : ITcpClient
         config.FixedHeaderLength,
         config.FixedBodyLength,
         config.LengthFieldOffset,
-        config.LengthFieldLength    );
+        config.LengthFieldLength);
   }
 
   /// <summary>
@@ -288,40 +288,40 @@ public class TcpClient : ITcpClient
                     async () =>
                     {
                       // 既に接続されている場合は何もしない
-                    if (IsConnected)
-                    {
-                      return;
-                    }
+                      if (IsConnected)
+                      {
+                        return;
+                      }
 
                       // トランスポートを再接続
-                    await _transport.ConnectAsync();
-                    _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
+                      await _transport.ConnectAsync();
+                      _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
                       // 新しいCancellationTokenSourceを作成（前のものはキャンセル済み）
-                    lock (_reconnectLock)
-                    {
-                      if (_cancellationTokenSource.IsCancellationRequested)
+                      lock (_reconnectLock)
                       {
-                        var oldCts = _cancellationTokenSource;
-                        _cancellationTokenSource = new CancellationTokenSource();
-                        oldCts.Dispose();
+                        if (_cancellationTokenSource.IsCancellationRequested)
+                        {
+                          var oldCts = _cancellationTokenSource;
+                          _cancellationTokenSource = new CancellationTokenSource();
+                          oldCts.Dispose();
+                        }
                       }
-                    }
 
                       // 意図的切断フラグをリセット
-                    _isIntentionalDisconnect = false;
+                      _isIntentionalDisconnect = false;
 
-                    OnConnected?.Invoke(this, EventArgs.Empty);
+                      OnConnected?.Invoke(this, EventArgs.Empty);
 
                       // 受信ループを再開
-                    _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
+                      _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
 
                       // キープアライブを再開
-                    if (_config.KeepAlive?.Enabled == true)
-                    {
-                      StartKeepAlive();
-                    }
-                  },
+                      if (_config.KeepAlive?.Enabled == true)
+                      {
+                        StartKeepAlive();
+                      }
+                    },
                     _config.ConnectionRetryPolicy,
                     reconnectCts.Token,
                     _logger);
