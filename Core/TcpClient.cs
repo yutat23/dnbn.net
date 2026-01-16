@@ -29,17 +29,53 @@ public class TcpClient : ITcpClient
   private Task? _reconnectTask;
   private readonly object _reconnectLock = new();
 
+  /// <summary>
+  /// クライアント名
+  /// </summary>
   public string Name => _config.Name;
+
+  /// <summary>
+  /// 接続状態
+  /// </summary>
   public bool IsConnected => _transport.IsConnected;
 
+  /// <summary>
+  /// メッセージ受信イベント
+  /// </summary>
   public event EventHandler<Message>? OnMessageReceived;
+
+  /// <summary>
+  /// 接続イベント
+  /// </summary>
   public event EventHandler? OnConnected;
+
+  /// <summary>
+  /// 切断イベント
+  /// </summary>
   public event EventHandler? OnDisconnected;
+
+  /// <summary>
+  /// エラーイベント
+  /// </summary>
   public event EventHandler<Exception>? OnError;
+
+  /// <summary>
+  /// キープアライブ応答受信イベント
+  /// </summary>
   public event EventHandler<Message>? OnKeepAliveResponseReceived;
 
+  /// <summary>
+  /// メッセージ受信のObservable
+  /// </summary>
   public IObservable<Message> MessageReceived => _messageReceivedSubject;
 
+  /// <summary>
+  /// コンストラクタ
+  /// </summary>
+  /// <param name="config">クライアント設定</param>
+  /// <param name="transport">トランスポート実装</param>
+  /// <param name="logger">ロガー（オプション）</param>
+  /// <param name="filters">メッセージフィルター（オプション）</param>
   public TcpClient(
       ClientConfig config,
       ITransport transport,
@@ -372,6 +408,13 @@ public class TcpClient : ITcpClient
     return await SendAndWaitAsync(message, _ => true, timeout);
   }
 
+  /// <summary>
+  /// メッセージを送信して、条件を満たす応答を待つ
+  /// </summary>
+  /// <param name="requestMessage">送信するメッセージ</param>
+  /// <param name="responsePredicate">応答の条件判定関数</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <returns>条件を満たす応答メッセージ</returns>
   public async Task<Message> SendAndWaitAsync(
       Message requestMessage,
       Func<Message, bool> responsePredicate,

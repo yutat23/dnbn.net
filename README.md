@@ -67,67 +67,6 @@ dotnet add package dnbn.net
 dotnet add package dnbn.net --version 1.1.0
 ```
 
-### GitHub Packagesからインストールする場合
-
-GitHub Packagesからもインストール可能です。その場合は以下の手順が必要です：
-
-#### 1. Personal Access Token (PAT) を作成
-
-GitHub Packagesにアクセスするため、Personal Access Tokenが必要です：
-
-1. GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-2. 「Generate new token (classic)」をクリック
-3. 以下のスコープを選択：
-   - ✅ `read:packages` - パッケージを読み取る
-4. トークンを生成して保存（後で表示できません）
-
-#### 2. nuget.config を作成
-
-プロジェクトのルートディレクトリに `nuget.config` を作成：
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="github" value="https://nuget.pkg.github.com/yutat23/index.json" />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-  </packageSources>
-</configuration>
-```
-
-#### 3. 認証を設定
-
-**Windows PowerShell の場合：**
-
-```powershell
-# 環境変数にトークンを設定
-$env:GITHUB_TOKEN = 'YOUR_GITHUB_TOKEN'
-
-# NuGetソースに認証情報を追加
-dotnet nuget add source https://nuget.pkg.github.com/yutat23/index.json `
-  --name github `
-  --username yutat23 `
-  --password $env:GITHUB_TOKEN `
-  --store-password-in-clear-text
-```
-
-**Linux/Mac の場合：**
-
-```bash
-# 環境変数にトークンを設定
-export GITHUB_TOKEN='YOUR_GITHUB_TOKEN'
-
-# NuGetソースに認証情報を追加
-dotnet nuget add source https://nuget.pkg.github.com/yutat23/index.json \
-  --name github \
-  --username yutat23 \
-  --password $GITHUB_TOKEN \
-  --store-password-in-clear-text
-```
-
-**注意**: `YOUR_GITHUB_TOKEN` は、上記で作成したPersonal Access Tokenに置き換えてください。
-
 ## クイックスタート
 
 ### 1. appsettings.json に設定を追加

@@ -46,7 +46,7 @@ class Program
     services.AddTcpMessengerWithLog4net(configuration);
 
     // ログフィルターを登録（オプション）
-    services.AddSingleton<IMessageFilter, LoggingFilter>();
+    services.AddSingleton<IMessageFilter, SampleLoggingFilter>();
 
     var serviceProvider = services.BuildServiceProvider();
     var factory = serviceProvider.GetRequiredService<ITcpMessengerFactory>();
@@ -394,17 +394,17 @@ class Program
 /// <summary>
 /// ログフィルターの実装例
 /// </summary>
-public class LoggingFilter : IMessageFilter
+internal class SampleLoggingFilter : IMessageFilter
 {
-  private readonly ILogger<LoggingFilter>? _logger;
+  private readonly ILogger<SampleLoggingFilter>? _logger;
 
   /// <summary>
   /// コンストラクタ
   /// </summary>
   /// <param name="loggerFactory">ロガーファクトリー（オプション）</param>
-  public LoggingFilter(ILoggerFactory? loggerFactory = null)
+  public SampleLoggingFilter(ILoggerFactory? loggerFactory = null)
   {
-    _logger = loggerFactory?.CreateLogger<LoggingFilter>();
+    _logger = loggerFactory?.CreateLogger<SampleLoggingFilter>();
   }
 
   /// <summary>
