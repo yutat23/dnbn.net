@@ -61,12 +61,6 @@
 dotnet add package dnbn.net
 ```
 
-または、特定のバージョンを指定する場合：
-
-```bash
-dotnet add package dnbn.net --version 1.1.0
-```
-
 ## クイックスタート
 
 ### 1. appsettings.json に設定を追加
