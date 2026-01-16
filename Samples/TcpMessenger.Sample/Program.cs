@@ -3,10 +3,10 @@ using Dnbn.Extensions;
 using Dnbn.Filters;
 using Dnbn.Logging;
 using Dnbn.Models;
+using log4net;
 using log4net.Config;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
 
 namespace TcpMessenger.Sample;
@@ -38,6 +38,8 @@ class Program
       Console.WriteLine("警告: log4net.configが見つかりません。デフォルト設定を使用します。");
       XmlConfigurator.Configure();
     }
+    ILog _log = LogManager.GetLogger(typeof(Program));
+    _log.Info("log4netが初期化されました。");
 
     // サービスを登録
     var services = new ServiceCollection();
@@ -50,7 +52,6 @@ class Program
 
     var serviceProvider = services.BuildServiceProvider();
     var factory = serviceProvider.GetRequiredService<ITcpMessengerFactory>();
-    var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
 
     // モード選択
     Console.WriteLine("モードを選択してください:");
@@ -66,13 +67,13 @@ class Program
       switch (choice)
       {
         case "1":
-          await RunServerMode(factory, logger);
+          await RunServerMode(factory, _log);
           break;
         case "2":
-          await RunClientMode(factory, logger);
+          await RunClientMode(factory, _log);
           break;
         case "3":
-          await RunIntegratedMode(factory, logger);
+          await RunIntegratedMode(factory, _log);
           break;
         default:
           Console.WriteLine("無効な選択です。");
@@ -81,7 +82,7 @@ class Program
     }
     catch (Exception ex)
     {
-      logger?.LogError(ex, "エラーが発生しました");
+      _log.Error("エラーが発生しました", ex);
       Console.WriteLine($"エラーが発生しました: {ex.Message}");
     }
     finally
@@ -94,7 +95,7 @@ class Program
   /// <summary>
   /// サーバーモード
   /// </summary>
-  static async Task RunServerMode(ITcpMessengerFactory factory, ILogger logger)
+  static async Task RunServerMode(ITcpMessengerFactory factory, ILog _log)
   {
     Console.WriteLine("\n=== サーバーモード ===");
     var server = factory.CreateServer("EchoServer");
@@ -102,33 +103,29 @@ class Program
     // イベントハンドラを設定
     server.OnClientConnected += (sender, sessionInfo) =>
     {
-      logger.LogInformation("クライアント接続: {SessionId} from {Endpoint}",
-              sessionInfo.SessionId, sessionInfo.SourceEndpoint);
+      _log.Info($"クライアント接続: {sessionInfo.SessionId} from {sessionInfo.SourceEndpoint}");
     };
 
     server.OnClientDisconnected += (sender, sessionInfo) =>
     {
-      logger.LogInformation("クライアント切断: {SessionId}", sessionInfo.SessionId);
+      _log.Info($"クライアント切断: {sessionInfo.SessionId}");
     };
 
     server.OnMessageReceived += async (sender, args) =>
     {
       var (message, sessionInfo) = args;
-      logger.LogInformation("受信 [{SessionId}]: {Message}",
-              sessionInfo.SessionId, message.Text?.Trim());
+      _log.Info($"受信 [{sessionInfo.SessionId}]: {message.Text?.Trim()}");
 
       // エコー応答を送信
       var response = Message.FromString($"ECHO: {message.Text}", System.Text.Encoding.UTF8);
       await server.SendAsync(sessionInfo.SessionId, response);
-      logger.LogInformation("送信 [{SessionId}]: {Message}",
-              sessionInfo.SessionId, response.Text?.Trim());
+      _log.Info($"送信 [{sessionInfo.SessionId}]: {response.Text?.Trim()}");
     };
 
     server.OnError += (sender, args) =>
     {
       var (exception, sessionInfo) = args;
-      logger.LogError(exception, "エラー発生 [SessionId: {SessionId}]",
-              sessionInfo?.SessionId ?? "Unknown");
+      _log.Error($"エラー発生 [SessionId: {sessionInfo?.SessionId ?? "Unknown"}]", exception);
     };
 
     // Observableパターンの使用例
@@ -137,12 +134,11 @@ class Program
         .Subscribe(args =>
         {
           var (message, sessionInfo) = args;
-          logger.LogWarning("アラート受信 [{SessionId}]: {Message}",
-                  sessionInfo.SessionId, message.Text);
+          _log.Warn($"アラート受信 [{sessionInfo.SessionId}]: {message.Text}");
         });
 
     await server.StartAsync();
-    logger.LogInformation("サーバーがポート 5000 で起動しました。");
+    _log.Info("サーバーがポート 5000 で起動しました。");
 
     Console.WriteLine("\nサーバーを停止するには 'q' を入力してください。");
     while (true)
@@ -159,7 +155,7 @@ class Program
   /// <summary>
   /// クライアントモード
   /// </summary>
-  static async Task RunClientMode(ITcpMessengerFactory factory, ILogger logger)
+  static async Task RunClientMode(ITcpMessengerFactory factory, ILog _log)
   {
     Console.WriteLine("\n=== クライアントモード ===");
     var client = factory.CreateClient("EchoClient");
@@ -167,28 +163,28 @@ class Program
     // イベントハンドラを設定
     client.OnConnected += (sender, args) =>
     {
-      logger.LogInformation("サーバーに接続しました");
+      _log.Info("サーバーに接続しました");
     };
 
     client.OnDisconnected += (sender, args) =>
     {
-      logger.LogInformation("サーバーから切断されました");
+      _log.Info("サーバーから切断されました");
     };
 
     client.OnMessageReceived += (sender, message) =>
     {
-      logger.LogInformation("受信: {Message}", message.Text?.Trim());
+      _log.Info($"受信: {message.Text?.Trim()}");
     };
 
     client.OnError += (sender, exception) =>
     {
-      logger.LogError(exception, "エラー発生");
+      _log.Error("エラー発生", exception);
     };
 
     // キープアライブ応答イベントの処理
     client.OnKeepAliveResponseReceived += (sender, message) =>
     {
-      logger.LogInformation("[KeepAlive] 応答受信: {Message}", message.Text?.Trim());
+      _log.Info($"[KeepAlive] 応答受信: {message.Text?.Trim()}");
       // 状態取得コマンドの応答を使用して処理を行う例
       // 例えば、応答内容に基づいて状態を更新するなど
     };
@@ -198,7 +194,7 @@ class Program
         .Where(msg => msg.Text?.StartsWith("ECHO:") == true)
         .Subscribe(msg =>
         {
-          logger.LogInformation("[Observable] エコー応答: {Message}", msg.Text);
+          _log.Info($"[Observable] エコー応答: {msg.Text}");
         });
 
     await client.ConnectAsync();
@@ -221,12 +217,12 @@ class Program
       {
         var message = Message.FromString($"{input}".Replace(@"\r", "\r"), System.Text.Encoding.UTF8);
         var response = await client.SendAsync(message, TimeSpan.FromSeconds(5));
-        logger.LogInformation("送信: {Message}", input);
-        logger.LogInformation("応答: {Response}", response.Text?.Trim());
+        _log.Info($"送信: {input}");
+        _log.Info($"応答: {response.Text?.Trim()}");
       }
       catch (Exception ex)
       {
-        logger.LogError(ex, "送信エラー");
+        _log.Error("送信エラー", ex);
       }
     }
 
@@ -236,7 +232,7 @@ class Program
   /// <summary>
   /// 統合モード（サーバー + クライアント）
   /// </summary>
-  static async Task RunIntegratedMode(ITcpMessengerFactory factory, ILogger logger)
+  static async Task RunIntegratedMode(ITcpMessengerFactory factory, ILog _log)
   {
     Console.WriteLine("\n=== 統合モード（サーバー + クライアント） ===");
 
@@ -245,7 +241,7 @@ class Program
     server.OnMessageReceived += async (sender, args) =>
     {
       var (message, sessionInfo) = args;
-      logger.LogInformation("[Server] 受信: {Message}", message.Text?.Trim());
+      _log.Info($"[Server] 受信: {message.Text?.Trim()}");
 
       // 応答を送信
       var response = Message.FromString($"OK: {message.Text}", System.Text.Encoding.UTF8);
@@ -253,7 +249,7 @@ class Program
     };
 
     await server.StartAsync();
-    logger.LogInformation("サーバーが起動しました。");
+    _log.Info("サーバーが起動しました。");
 
     // 少し待ってからクライアントを接続
     await Task.Delay(500);
@@ -262,19 +258,19 @@ class Program
     var client = factory.CreateClient("EchoClient");
     client.OnMessageReceived += (sender, message) =>
     {
-      logger.LogInformation("[Client] 受信: {Message}", message.Text?.Trim());
+      _log.Info($"[Client] 受信: {message.Text?.Trim()}");
     };
 
     // キープアライブ応答イベントの処理
     client.OnKeepAliveResponseReceived += (sender, message) =>
     {
-      logger.LogInformation("[Client] [キープアライブ] 応答受信: {Message}", message.Text?.Trim());
+      _log.Info($"[Client] [キープアライブ] 応答受信: {message.Text?.Trim()}");
       // 状態取得コマンドの応答を使用して処理を行う例
       // 例えば、応答内容に基づいて状態を更新するなど
     };
 
     await client.ConnectAsync();
-    logger.LogInformation("クライアントが接続しました。");
+    _log.Info("クライアントが接続しました。");
 
     // キューイング方式のSendAsyncの動作確認
     Console.WriteLine("\n=== キューイング方式のSendAsyncの動作確認 ===");
@@ -288,7 +284,7 @@ class Program
       client.OnMessageReceived += (sender, message) =>
       {
         eventReceivedCount++;
-        logger.LogWarning("[イベント] これは表示されないはず: {Message}", message.Text);
+        _log.Warn($"[イベント] これは表示されないはず: {message.Text}");
       };
 
       // 複数のメッセージを順次送信
@@ -302,26 +298,25 @@ class Program
         var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
         var sendEnd = DateTime.UtcNow;
 
-        logger.LogInformation("[送信] {Message} -> [応答] {Response} (所要時間: {Elapsed}ms)",
-            msgText, response.Text?.Trim(), (sendEnd - sendStart).TotalMilliseconds);
+        _log.Info($"[送信] {msgText} -> [応答] {response.Text?.Trim()} (所要時間: {(sendEnd - sendStart).TotalMilliseconds}ms)");
       }
 
       var totalTime = DateTime.UtcNow - startTime;
-      logger.LogInformation("\n合計所要時間: {TotalTime}ms", totalTime.TotalMilliseconds);
-      logger.LogInformation("OnMessageReceivedイベントが発行された回数: {Count} (0であるべき)", eventReceivedCount);
+      _log.Info($"\n合計所要時間: {totalTime.TotalMilliseconds}ms");
+      _log.Info($"OnMessageReceivedイベントが発行された回数: {eventReceivedCount} (0であるべき)");
 
       if (eventReceivedCount == 0)
       {
-        logger.LogInformation("✓ キューイング方式が正常に動作しています（イベントは発行されません）");
+        _log.Info("✓ キューイング方式が正常に動作しています（イベントは発行されません）");
       }
       else
       {
-        logger.LogWarning("✗ イベントが発行されています（キューイング方式の応答はイベントを発行しません）");
+        _log.Warn("✗ イベントが発行されています（キューイング方式の応答はイベントを発行しません）");
       }
     }
     catch (Exception ex)
     {
-      logger.LogError(ex, "キューイング方式のテストでエラーが発生しました");
+      _log.Error("キューイング方式のテストでエラーが発生しました", ex);
     }
 
     // Promise的チェーン処理の例（SendAsyncを使用）
@@ -332,18 +327,18 @@ class Program
 
       // SendAsyncで送信して応答を待つ
       var firstResponse = await client.SendAsync(initMessage, TimeSpan.FromSeconds(3));
-      logger.LogInformation("初期化応答: {Message}", firstResponse.Text);
+      _log.Info($"初期化応答: {firstResponse.Text}");
 
       // 次のリクエストを送信
       var nextMessage = Message.FromString($"NEXT: {firstResponse.Text}\r\n", System.Text.Encoding.UTF8);
       var finalResponse = await client.SendAsync(nextMessage, TimeSpan.FromSeconds(3));
 
-      logger.LogInformation("最終応答: {Message}", finalResponse.Text);
-      logger.LogInformation("チェーン処理が完了しました。");
+      _log.Info($"最終応答: {finalResponse.Text}");
+      _log.Info("チェーン処理が完了しました。");
     }
     catch (Exception ex)
     {
-      logger.LogError(ex, "チェーン処理でエラーが発生しました");
+      _log.Error("チェーン処理でエラーが発生しました", ex);
     }
 
     // 対話的なメッセージ送信（キューイング方式）
@@ -372,17 +367,16 @@ class Program
         var response = await client.SendAsync(message, TimeSpan.FromSeconds(5));
         var sendEnd = DateTime.UtcNow;
 
-        logger.LogInformation("[送信] {Message}", input);
-        logger.LogInformation("[応答] {Response} (所要時間: {Elapsed}ms)",
-            response.Text?.Trim(), (sendEnd - sendStart).TotalMilliseconds);
+        _log.Info($"[送信] {input}");
+        _log.Info($"[応答] {response.Text?.Trim()} (所要時間: {(sendEnd - sendStart).TotalMilliseconds}ms)");
       }
       catch (TimeoutException ex)
       {
-        logger.LogError(ex, "タイムアウト: {Message}", ex.Message);
+        _log.Error($"タイムアウト: {ex.Message}", ex);
       }
       catch (Exception ex)
       {
-        logger.LogError(ex, "送信エラー");
+        _log.Error("送信エラー", ex);
       }
     }
 
@@ -396,15 +390,13 @@ class Program
 /// </summary>
 internal class SampleLoggingFilter : IMessageFilter
 {
-  private readonly ILogger<SampleLoggingFilter>? _logger;
+  private static readonly ILog _log = LogManager.GetLogger(typeof(SampleLoggingFilter));
 
   /// <summary>
   /// コンストラクタ
   /// </summary>
-  /// <param name="loggerFactory">ロガーファクトリー（オプション）</param>
-  public SampleLoggingFilter(ILoggerFactory? loggerFactory = null)
+  public SampleLoggingFilter()
   {
-    _logger = loggerFactory?.CreateLogger<SampleLoggingFilter>();
   }
 
   /// <summary>
@@ -415,7 +407,7 @@ internal class SampleLoggingFilter : IMessageFilter
   /// <returns>処理後のメッセージ</returns>
   public Task<Message> OnSendingAsync(Message msg, IMessageContext ctx)
   {
-    _logger?.LogDebug("[Filter] 送信前: {Message}", msg.Text?.Trim());
+    _log.Debug($"[Filter] 送信前: {msg.Text?.Trim()}");
     return Task.FromResult(msg);
   }
 
@@ -427,78 +419,8 @@ internal class SampleLoggingFilter : IMessageFilter
   /// <returns>処理後のメッセージ</returns>
   public Task<Message> OnReceivedAsync(Message msg, IMessageContext ctx)
   {
-    _logger?.LogDebug("[Filter] 受信後: {Message}", msg.Text?.Trim());
+    _log.Debug($"[Filter] 受信後: {msg.Text?.Trim()}");
     return Task.FromResult(msg);
   }
 }
 
-/// <summary>
-/// 簡易的なLoggerFactory実装（フォールバック用）
-/// </summary>
-internal class SimpleLoggerFactory : ILoggerFactory
-{
-  public void AddProvider(ILoggerProvider provider)
-  {
-    // 簡易実装では何もしない
-  }
-
-  public ILogger CreateLogger(string categoryName)
-  {
-    return new SimpleLogger(categoryName);
-  }
-
-  public void Dispose()
-  {
-    // リソースのクリーンアップ
-  }
-}
-
-/// <summary>
-/// 簡易的なLogger実装（フォールバック用）
-/// </summary>
-internal class SimpleLogger : ILogger
-{
-  private readonly string _categoryName;
-
-  public SimpleLogger(string categoryName)
-  {
-    _categoryName = categoryName;
-  }
-
-  public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-  public bool IsEnabled(LogLevel logLevel) => true;
-
-  public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-  {
-    var message = formatter(state, exception);
-    Console.WriteLine($"[{logLevel}] [{_categoryName}] {message}");
-    if (exception != null)
-    {
-      Console.WriteLine($"Exception: {exception}");
-    }
-  }
-}
-
-/// <summary>
-/// 簡易的なLogger実装（フォールバック用）
-/// </summary>
-/// <typeparam name="T">ロガーのカテゴリ型</typeparam>
-internal class SimpleLogger<T> : ILogger<T>
-{
-  private readonly SimpleLogger _logger;
-
-  public SimpleLogger(ILoggerFactory loggerFactory)
-  {
-    _logger = new SimpleLogger(typeof(T).FullName ?? typeof(T).Name);
-  }
-
-  public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-  public bool IsEnabled(LogLevel logLevel) => true;
-
-  public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-  {
-    _logger.Log(logLevel, eventId, state, exception, formatter);
-  }
-}
