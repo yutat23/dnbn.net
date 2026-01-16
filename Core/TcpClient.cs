@@ -14,7 +14,7 @@ namespace Dnbn.Core;
 /// </summary>
 public class TcpClient : ITcpClient
 {
-  private readonly ClientConfig _config;
+  private ClientConfig _config;
   private readonly ILogger<TcpClient>? _logger;
   private readonly List<IMessageFilter> _filters;
   private readonly ITransport _transport;
@@ -28,6 +28,7 @@ public class TcpClient : ITcpClient
   private bool _isIntentionalDisconnect = false;
   private Task? _reconnectTask;
   private readonly object _reconnectLock = new();
+  private readonly object _configLock = new();
 
   /// <summary>
   /// クライアント名
@@ -163,9 +164,7 @@ public class TcpClient : ITcpClient
 
     _isIntentionalDisconnect = isIntentional;
 
-    _keepAliveTimer?.Stop();
-    _keepAliveTimer?.Dispose();
-    _keepAliveTimer = null;
+    StopKeepAlive();
 
     _cancellationTokenSource.Cancel();
     await _transport.DisconnectAsync();
@@ -510,29 +509,47 @@ public class TcpClient : ITcpClient
 
   private void StartKeepAlive()
   {
-    if (_config.KeepAlive == null)
+    lock (_configLock)
     {
-      return;
-    }
-
-    _keepAliveTimer = new System.Timers.Timer(_config.KeepAlive.IntervalSeconds * 1000);
-    _keepAliveTimer.Elapsed += async (sender, e) =>
-    {
-      if (IsConnected && !_disposed)
+      if (_config.KeepAlive == null || !_config.KeepAlive.Enabled)
       {
-        try
-        {
-          var keepAliveMessage = Message.FromString(_config.KeepAlive.Message, GetEncoding(_config.Encoding));
-          await SendKeepAliveAsync(keepAliveMessage, TimeSpan.FromSeconds(_config.KeepAlive.IntervalSeconds));
-        }
-        catch (Exception ex)
-        {
-          _logger?.LogError(ex, "Keep-alive failed for client {Name}", Name);
-        }
+        return;
       }
-    };
-    _keepAliveTimer.AutoReset = true;
-    _keepAliveTimer.Start();
+
+      // 既存のタイマーを停止・破棄
+      _keepAliveTimer?.Stop();
+      _keepAliveTimer?.Dispose();
+      _keepAliveTimer = null;
+
+      _keepAliveTimer = new System.Timers.Timer(_config.KeepAlive.IntervalSeconds * 1000);
+      _keepAliveTimer.Elapsed += async (sender, e) =>
+      {
+        if (IsConnected && !_disposed)
+        {
+          try
+          {
+            var keepAliveMessage = Message.FromString(_config.KeepAlive.Message, GetEncoding(_config.Encoding));
+            await SendKeepAliveAsync(keepAliveMessage, TimeSpan.FromSeconds(_config.KeepAlive.IntervalSeconds));
+          }
+          catch (Exception ex)
+          {
+            _logger?.LogError(ex, "Keep-alive failed for client {Name}", Name);
+          }
+        }
+      };
+      _keepAliveTimer.AutoReset = true;
+      _keepAliveTimer.Start();
+    }
+  }
+
+  private void StopKeepAlive()
+  {
+    lock (_configLock)
+    {
+      _keepAliveTimer?.Stop();
+      _keepAliveTimer?.Dispose();
+      _keepAliveTimer = null;
+    }
   }
 
   /// <summary>
@@ -644,6 +661,179 @@ public class TcpClient : ITcpClient
   }
 
   /// <summary>
+  /// KeepAlive設定の取得・設定
+  /// </summary>
+  public KeepAliveConfig? KeepAlive
+  {
+    get
+    {
+      lock (_configLock)
+      {
+        return _config.KeepAlive == null ? null :
+            new KeepAliveConfig
+            {
+              Enabled = _config.KeepAlive.Enabled,
+              IntervalSeconds = _config.KeepAlive.IntervalSeconds,
+              Message = _config.KeepAlive.Message
+            };
+      }
+    }
+    set
+    {
+      lock (_configLock)
+      {
+        _config.KeepAlive = value == null ? null :
+            new KeepAliveConfig
+            {
+              Enabled = value.Enabled,
+              IntervalSeconds = value.IntervalSeconds,
+              Message = value.Message
+            };
+
+        if (IsConnected)
+        {
+          _keepAliveTimer?.Stop();
+          _keepAliveTimer?.Dispose();
+          _keepAliveTimer = null;
+
+          if (_config.KeepAlive?.Enabled == true)
+          {
+            StartKeepAlive();
+          }
+        }
+
+        _logger?.LogInformation("TCP Client '{Name}' KeepAlive設定を更新しました: Enabled={Enabled}, Interval={Interval}s, Message={Message}",
+            Name, _config.KeepAlive?.Enabled ?? false, _config.KeepAlive?.IntervalSeconds ?? 0, _config.KeepAlive?.Message ?? "");
+      }
+    }
+  }
+
+  /// <summary>
+  /// タイムアウト設定の取得・設定（ミリ秒）
+  /// </summary>
+  public int TimeoutMilliseconds
+  {
+    get
+    {
+      lock (_configLock)
+      {
+        return _config.TimeoutMilliseconds;
+      }
+    }
+    set
+    {
+      if (value <= 0)
+      {
+        throw new ArgumentException("Timeout must be greater than 0", nameof(value));
+      }
+
+      lock (_configLock)
+      {
+        _config.TimeoutMilliseconds = value;
+        _logger?.LogInformation("TCP Client '{Name}' タイムアウト設定を更新しました: {Timeout}ms", Name, value);
+      }
+    }
+  }
+
+  /// <summary>
+  /// リトライポリシーの取得・設定
+  /// </summary>
+  public RetryPolicy? RetryPolicy
+  {
+    get
+    {
+      lock (_configLock)
+      {
+        return _config.RetryPolicy == null ? null :
+            new RetryPolicy
+            {
+              MaxRetryCount = _config.RetryPolicy.MaxRetryCount,
+              RetryDelayStrategy = _config.RetryPolicy.RetryDelayStrategy,
+              InitialDelayMs = _config.RetryPolicy.InitialDelayMs,
+              MaxDelayMs = _config.RetryPolicy.MaxDelayMs,
+              FailOnTimeout = _config.RetryPolicy.FailOnTimeout,
+              FailOnErrorResponse = _config.RetryPolicy.FailOnErrorResponse
+            };
+      }
+    }
+    set
+    {
+      lock (_configLock)
+      {
+        _config.RetryPolicy = value == null ? null :
+            new RetryPolicy
+            {
+              MaxRetryCount = value.MaxRetryCount,
+              RetryDelayStrategy = value.RetryDelayStrategy,
+              InitialDelayMs = value.InitialDelayMs,
+              MaxDelayMs = value.MaxDelayMs,
+              FailOnTimeout = value.FailOnTimeout,
+              FailOnErrorResponse = value.FailOnErrorResponse
+            };
+
+        if (_config.RetryPolicy != null)
+        {
+          _logger?.LogInformation("TCP Client '{Name}' リトライポリシーを更新しました: MaxRetryCount={MaxRetryCount}, Strategy={Strategy}",
+              Name, _config.RetryPolicy.MaxRetryCount, _config.RetryPolicy.RetryDelayStrategy);
+        }
+        else
+        {
+          _logger?.LogInformation("TCP Client '{Name}' リトライポリシーを無効化しました", Name);
+        }
+      }
+    }
+  }
+
+  /// <summary>
+  /// 接続リトライポリシーの取得・設定
+  /// </summary>
+  public RetryPolicy? ConnectionRetryPolicy
+  {
+    get
+    {
+      lock (_configLock)
+      {
+        return _config.ConnectionRetryPolicy == null ? null :
+            new RetryPolicy
+            {
+              MaxRetryCount = _config.ConnectionRetryPolicy.MaxRetryCount,
+              RetryDelayStrategy = _config.ConnectionRetryPolicy.RetryDelayStrategy,
+              InitialDelayMs = _config.ConnectionRetryPolicy.InitialDelayMs,
+              MaxDelayMs = _config.ConnectionRetryPolicy.MaxDelayMs,
+              FailOnTimeout = _config.ConnectionRetryPolicy.FailOnTimeout,
+              FailOnErrorResponse = _config.ConnectionRetryPolicy.FailOnErrorResponse
+            };
+      }
+    }
+    set
+    {
+      lock (_configLock)
+      {
+        _config.ConnectionRetryPolicy = value == null ? null :
+            new RetryPolicy
+            {
+              MaxRetryCount = value.MaxRetryCount,
+              RetryDelayStrategy = value.RetryDelayStrategy,
+              InitialDelayMs = value.InitialDelayMs,
+              MaxDelayMs = value.MaxDelayMs,
+              FailOnTimeout = value.FailOnTimeout,
+              FailOnErrorResponse = value.FailOnErrorResponse
+            };
+
+        if (_config.ConnectionRetryPolicy != null)
+        {
+          _logger?.LogInformation("TCP Client '{Name}' 接続リトライポリシーを更新しました: MaxRetryCount={MaxRetryCount}, Strategy={Strategy}",
+              Name, _config.ConnectionRetryPolicy.MaxRetryCount, _config.ConnectionRetryPolicy.RetryDelayStrategy);
+        }
+        else
+        {
+          _logger?.LogInformation("TCP Client '{Name}' 接続リトライポリシーを無効化しました", Name);
+        }
+      }
+    }
+  }
+
+  /// <summary>
   /// リソースを解放
   /// </summary>
   public void Dispose()
@@ -656,7 +846,7 @@ public class TcpClient : ITcpClient
     DisconnectAsync().GetAwaiter().GetResult();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
-    _keepAliveTimer?.Dispose();
+    StopKeepAlive();
     _disposed = true;
   }
 

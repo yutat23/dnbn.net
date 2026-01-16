@@ -1,3 +1,4 @@
+using Dnbn.Configuration;
 using Dnbn.Core;
 using Dnbn.Extensions;
 using Dnbn.Filters;
@@ -200,6 +201,7 @@ class Program
     await client.ConnectAsync();
 
     Console.WriteLine("\nメッセージを入力してください（終了するには 'quit' を入力）:");
+    Console.WriteLine("設定変更: 'config' と入力");
     while (true)
     {
       var input = Console.ReadLine();
@@ -211,6 +213,12 @@ class Program
       if (input.ToLower() == "quit")
       {
         break;
+      }
+
+      if (input.ToLower().StartsWith("config"))
+      {
+        await HandleConfigCommand(client, input, _log);
+        continue;
       }
 
       try
@@ -345,7 +353,8 @@ class Program
     Console.WriteLine("\n=== 対話的なメッセージ送信（キューイング方式） ===");
     Console.WriteLine("メッセージを入力してください（終了するには 'quit' を入力）:");
     Console.WriteLine("複数のメッセージを連続で送信すると、順次処理されます。");
-    Console.WriteLine("応答は戻り値で取得でき、OnMessageReceivedイベントは発行されません。\n");
+    Console.WriteLine("応答は戻り値で取得でき、OnMessageReceivedイベントは発行されません。");
+    Console.WriteLine("設定変更: 'config' と入力\n");
 
     while (true)
     {
@@ -358,6 +367,12 @@ class Program
       if (input.ToLower() == "quit")
       {
         break;
+      }
+
+      if (input.ToLower().StartsWith("config"))
+      {
+        await HandleConfigCommand(client, input, _log);
+        continue;
       }
 
       try
@@ -382,6 +397,282 @@ class Program
 
     await client.DisconnectAsync();
     await server.StopAsync();
+  }
+
+  /// <summary>
+  /// 設定変更コマンドのハンドラー
+  /// </summary>
+  static async Task HandleConfigCommand(ITcpClient client, string command, ILog log)
+  {
+    var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length < 2)
+    {
+      ShowConfigMenu(log);
+      return;
+    }
+
+    try
+    {
+      switch (parts[1].ToLower())
+      {
+        case "show":
+          ShowCurrentConfig(client, log);
+          break;
+        case "keepalive":
+          await HandleKeepAliveConfig(client, parts, log);
+          break;
+        case "timeout":
+          await HandleTimeoutConfig(client, parts, log);
+          break;
+        case "retry":
+          await HandleRetryPolicyConfig(client, parts, log);
+          break;
+        case "connectionretry":
+          await HandleConnectionRetryPolicyConfig(client, parts, log);
+          break;
+        default:
+          Console.WriteLine("無効なコマンドです。'config' と入力してメニューを表示してください。");
+          break;
+      }
+    }
+    catch (Exception ex)
+    {
+      log.Error("設定変更中にエラーが発生しました", ex);
+      Console.WriteLine($"エラー: {ex.Message}");
+    }
+  }
+
+  /// <summary>
+  /// 設定メニューを表示
+  /// </summary>
+  static void ShowConfigMenu(ILog log)
+  {
+    Console.WriteLine("\n=== 設定変更メニュー ===");
+    Console.WriteLine("config show              - 現在の設定を表示");
+    Console.WriteLine("config keepalive         - KeepAlive設定を変更");
+    Console.WriteLine("config timeout <ms>      - タイムアウト設定を変更");
+    Console.WriteLine("config retry             - リトライポリシーを変更");
+    Console.WriteLine("config connectionretry   - 接続リトライポリシーを変更");
+    Console.WriteLine();
+  }
+
+  /// <summary>
+  /// 現在の設定を表示
+  /// </summary>
+  static void ShowCurrentConfig(ITcpClient client, ILog log)
+  {
+    Console.WriteLine("\n=== 現在の設定 ===");
+    Console.WriteLine($"クライアント名: {client.Name}");
+    Console.WriteLine($"接続状態: {(client.IsConnected ? "接続中" : "切断中")}");
+
+    var keepAlive = client.KeepAlive;
+    if (keepAlive != null)
+    {
+      Console.WriteLine($"KeepAlive: Enabled={keepAlive.Enabled}, Interval={keepAlive.IntervalSeconds}s, Message={keepAlive.Message}");
+    }
+    else
+    {
+      Console.WriteLine("KeepAlive: 未設定");
+    }
+
+    Console.WriteLine($"タイムアウト: {client.TimeoutMilliseconds}ms");
+
+    var retryPolicy = client.RetryPolicy;
+    if (retryPolicy != null)
+    {
+      Console.WriteLine($"リトライポリシー: MaxRetryCount={retryPolicy.MaxRetryCount}, Strategy={retryPolicy.RetryDelayStrategy}");
+    }
+    else
+    {
+      Console.WriteLine("リトライポリシー: 未設定");
+    }
+
+    var connectionRetryPolicy = client.ConnectionRetryPolicy;
+    if (connectionRetryPolicy != null)
+    {
+      Console.WriteLine($"接続リトライポリシー: MaxRetryCount={connectionRetryPolicy.MaxRetryCount}, Strategy={connectionRetryPolicy.RetryDelayStrategy}");
+    }
+    else
+    {
+      Console.WriteLine("接続リトライポリシー: 未設定");
+    }
+    Console.WriteLine();
+  }
+
+  /// <summary>
+  /// KeepAlive設定の変更
+  /// </summary>
+  static async Task HandleKeepAliveConfig(ITcpClient client, string[] parts, ILog log)
+  {
+    if (parts.Length < 3)
+    {
+      Console.WriteLine("使用方法: config keepalive <enable|disable> [interval] [message]");
+      Console.WriteLine("例: config keepalive enable 10 \"w\\r\"");
+      return;
+    }
+
+    bool enabled = parts[2].ToLower() == "enable" || parts[2].ToLower() == "enabled";
+    
+    if (!enabled)
+    {
+      client.KeepAlive = new KeepAliveConfig { Enabled = false };
+      Console.WriteLine("KeepAliveを無効化しました。");
+      return;
+    }
+
+    int intervalSeconds = 30;
+    string message = "w\r";
+
+    if (parts.Length >= 4 && int.TryParse(parts[3], out int interval))
+    {
+      intervalSeconds = interval;
+    }
+
+    if (parts.Length >= 5)
+    {
+      message = parts[4].Replace("\\r", "\r").Replace("\\n", "\n");
+    }
+
+    client.KeepAlive = new KeepAliveConfig
+    {
+      Enabled = true,
+      IntervalSeconds = intervalSeconds,
+      Message = message
+    };
+
+    Console.WriteLine($"KeepAlive設定を更新しました: Enabled=true, Interval={intervalSeconds}s, Message={message}");
+  }
+
+  /// <summary>
+  /// タイムアウト設定の変更
+  /// </summary>
+  static async Task HandleTimeoutConfig(ITcpClient client, string[] parts, ILog log)
+  {
+    if (parts.Length < 3)
+    {
+      Console.WriteLine("使用方法: config timeout <milliseconds>");
+      Console.WriteLine("例: config timeout 10000");
+      return;
+    }
+
+    if (!int.TryParse(parts[2], out int timeoutMs) || timeoutMs <= 0)
+    {
+      Console.WriteLine("無効な値です。正の整数を指定してください。");
+      return;
+    }
+
+    client.TimeoutMilliseconds = timeoutMs;
+    Console.WriteLine($"タイムアウト設定を更新しました: {timeoutMs}ms");
+  }
+
+  /// <summary>
+  /// リトライポリシー設定の変更
+  /// </summary>
+  static async Task HandleRetryPolicyConfig(ITcpClient client, string[] parts, ILog log)
+  {
+    if (parts.Length < 3)
+    {
+      Console.WriteLine("使用方法: config retry <disable|enable> [maxRetryCount] [strategy] [initialDelayMs] [maxDelayMs]");
+      Console.WriteLine("例: config retry enable 3 exponential 500 30000");
+      return;
+    }
+
+    if (parts[2].ToLower() == "disable")
+    {
+      client.RetryPolicy = null;
+      Console.WriteLine("リトライポリシーを無効化しました。");
+      return;
+    }
+
+    int maxRetryCount = 3;
+    RetryDelayStrategy strategy = RetryDelayStrategy.Exponential;
+    int initialDelayMs = 500;
+    int maxDelayMs = 30000;
+
+    if (parts.Length >= 4 && int.TryParse(parts[3], out int maxRetry))
+    {
+      maxRetryCount = maxRetry;
+    }
+
+    if (parts.Length >= 5)
+    {
+      strategy = parts[4].ToLower() == "fixed" ? RetryDelayStrategy.Fixed : RetryDelayStrategy.Exponential;
+    }
+
+    if (parts.Length >= 6 && int.TryParse(parts[5], out int initialDelay))
+    {
+      initialDelayMs = initialDelay;
+    }
+
+    if (parts.Length >= 7 && int.TryParse(parts[6], out int maxDelay))
+    {
+      maxDelayMs = maxDelay;
+    }
+
+    client.RetryPolicy = new RetryPolicy
+    {
+      MaxRetryCount = maxRetryCount,
+      RetryDelayStrategy = strategy,
+      InitialDelayMs = initialDelayMs,
+      MaxDelayMs = maxDelayMs
+    };
+
+    Console.WriteLine($"リトライポリシーを更新しました: MaxRetryCount={maxRetryCount}, Strategy={strategy}");
+  }
+
+  /// <summary>
+  /// 接続リトライポリシー設定の変更
+  /// </summary>
+  static async Task HandleConnectionRetryPolicyConfig(ITcpClient client, string[] parts, ILog log)
+  {
+    if (parts.Length < 3)
+    {
+      Console.WriteLine("使用方法: config connectionretry <disable|enable> [maxRetryCount] [strategy] [initialDelayMs] [maxDelayMs]");
+      Console.WriteLine("例: config connectionretry enable -1 exponential 1000 60000");
+      return;
+    }
+
+    if (parts[2].ToLower() == "disable")
+    {
+      client.ConnectionRetryPolicy = null;
+      Console.WriteLine("接続リトライポリシーを無効化しました。");
+      return;
+    }
+
+    int maxRetryCount = -1;
+    RetryDelayStrategy strategy = RetryDelayStrategy.Exponential;
+    int initialDelayMs = 1000;
+    int maxDelayMs = 60000;
+
+    if (parts.Length >= 4 && int.TryParse(parts[3], out int maxRetry))
+    {
+      maxRetryCount = maxRetry;
+    }
+
+    if (parts.Length >= 5)
+    {
+      strategy = parts[4].ToLower() == "fixed" ? RetryDelayStrategy.Fixed : RetryDelayStrategy.Exponential;
+    }
+
+    if (parts.Length >= 6 && int.TryParse(parts[5], out int initialDelay))
+    {
+      initialDelayMs = initialDelay;
+    }
+
+    if (parts.Length >= 7 && int.TryParse(parts[6], out int maxDelay))
+    {
+      maxDelayMs = maxDelay;
+    }
+
+    client.ConnectionRetryPolicy = new RetryPolicy
+    {
+      MaxRetryCount = maxRetryCount,
+      RetryDelayStrategy = strategy,
+      InitialDelayMs = initialDelayMs,
+      MaxDelayMs = maxDelayMs
+    };
+
+    Console.WriteLine($"接続リトライポリシーを更新しました: MaxRetryCount={maxRetryCount}, Strategy={strategy}");
   }
 }
 

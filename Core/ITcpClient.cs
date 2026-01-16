@@ -1,5 +1,6 @@
 using System;
 using System.Reactive;
+using Dnbn.Configuration;
 using Dnbn.Models;
 
 namespace Dnbn.Core;
@@ -77,6 +78,26 @@ public interface ITcpClient : IDisposable
       Message requestMessage,
       Func<Message, bool> responsePredicate,
       TimeSpan timeout);
+
+  /// <summary>
+  /// KeepAlive設定の取得・設定
+  /// </summary>
+  KeepAliveConfig? KeepAlive { get; set; }
+
+  /// <summary>
+  /// タイムアウト設定の取得・設定（ミリ秒）
+  /// </summary>
+  int TimeoutMilliseconds { get; set; }
+
+  /// <summary>
+  /// リトライポリシーの取得・設定
+  /// </summary>
+  RetryPolicy? RetryPolicy { get; set; }
+
+  /// <summary>
+  /// 接続リトライポリシーの取得・設定
+  /// </summary>
+  RetryPolicy? ConnectionRetryPolicy { get; set; }
 }
 
 

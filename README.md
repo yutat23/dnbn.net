@@ -32,6 +32,7 @@
   - [フィルターパイプライン](#フィルターパイプライン)
   - [接続リトライ機能](#接続リトライ機能)
   - [キープアライブ機能](#キープアライブ機能)
+  - [動的設定変更機能](#動的設定変更機能)
   - [セッション管理](#セッション管理)
   - [エラーハンドリング](#エラーハンドリング)
 - [ログ機能](#ログ機能)
@@ -50,6 +51,7 @@
 - リトライポリシー、フィルターパイプライン対応
 - 接続リトライ機能（接続失敗時およびNW障害時の自動再接続、無限リトライ対応）
 - キープアライブ機能（定期的なメッセージ送信で接続維持）
+- 動的設定変更機能（実行時にKeepAlive、タイムアウト、リトライポリシーなどを変更可能）
 - 複数クライアントを同一ポートで受信可能
 - appsettings.json統合設定
 
@@ -490,6 +492,10 @@ TCPクライアントのインターフェイスです。
 |-----------|-----|------|
 | `Name` | `string` | クライアント名 |
 | `IsConnected` | `bool` | 接続状態 |
+| `KeepAlive` | `KeepAliveConfig?` | KeepAlive設定の取得・設定（実行時に変更可能） |
+| `TimeoutMilliseconds` | `int` | タイムアウト設定の取得・設定（ミリ秒、実行時に変更可能） |
+| `RetryPolicy` | `RetryPolicy?` | リトライポリシーの取得・設定（実行時に変更可能） |
+| `ConnectionRetryPolicy` | `RetryPolicy?` | 接続リトライポリシーの取得・設定（実行時に変更可能） |
 
 #### イベント
 
@@ -560,6 +566,81 @@ var response = await client.SendAndWaitAsync(
 ```
 
 **注意**: このメソッドを使用した場合、応答は`OnMessageReceived`イベントでは発行されません（キューイング方式）。
+
+#### 動的設定変更
+
+実行時に設定を変更できます。接続中でも変更可能です。
+
+**KeepAlive設定の変更**:
+
+```csharp
+// KeepAliveを有効化
+client.KeepAlive = new KeepAliveConfig
+{
+    Enabled = true,
+    IntervalSeconds = 10,
+    Message = "PING\r"
+};
+
+// KeepAliveを無効化
+client.KeepAlive = new KeepAliveConfig { Enabled = false };
+```
+
+**タイムアウト設定の変更**:
+
+```csharp
+// タイムアウトを10秒に変更
+client.TimeoutMilliseconds = 10000;
+```
+
+**リトライポリシーの変更**:
+
+```csharp
+// リトライポリシーを設定
+client.RetryPolicy = new RetryPolicy
+{
+    MaxRetryCount = 5,
+    RetryDelayStrategy = RetryDelayStrategy.Exponential,
+    InitialDelayMs = 1000,
+    MaxDelayMs = 30000
+};
+
+// リトライポリシーを無効化
+client.RetryPolicy = null;
+```
+
+**接続リトライポリシーの変更**:
+
+```csharp
+// 接続リトライポリシーを設定（無限リトライ）
+client.ConnectionRetryPolicy = new RetryPolicy
+{
+    MaxRetryCount = -1,
+    RetryDelayStrategy = RetryDelayStrategy.Exponential,
+    InitialDelayMs = 2000,
+    MaxDelayMs = 60000
+};
+```
+
+**現在の設定を取得**:
+
+```csharp
+// KeepAlive設定を取得
+var keepAlive = client.KeepAlive;
+if (keepAlive != null)
+{
+    Console.WriteLine($"KeepAlive: Enabled={keepAlive.Enabled}, Interval={keepAlive.IntervalSeconds}s");
+}
+
+// タイムアウト設定を取得
+var timeout = client.TimeoutMilliseconds;
+Console.WriteLine($"Timeout: {timeout}ms");
+```
+
+**注意事項**:
+- KeepAlive設定を変更すると、接続中の場合、既存のタイマーが停止され、新しい設定で再起動されます
+- 設定変更はスレッドセーフに実装されています
+- プロパティから取得した設定オブジェクトはコピーなので、直接変更しても元の設定には影響しません
 
 #### Observable
 
@@ -912,6 +993,71 @@ client.OnKeepAliveResponseReceived += (sender, message) =>
 };
 ```
 
+**実行時の設定変更**:
+
+```csharp
+// 接続中にKeepAlive設定を変更
+client.KeepAlive = new KeepAliveConfig
+{
+    Enabled = true,
+    IntervalSeconds = 10,  // 間隔を10秒に変更
+    Message = "STATUS\r"  // メッセージを変更
+};
+
+// KeepAliveを無効化
+client.KeepAlive = new KeepAliveConfig { Enabled = false };
+```
+
+### 動的設定変更機能
+
+実行時にクライアント設定を変更できます。接続中でも変更可能です。
+
+**対応している設定**:
+- KeepAlive設定（有効/無効、間隔、メッセージ）
+- タイムアウト設定
+- リトライポリシー
+- 接続リトライポリシー
+
+**使用例**:
+
+```csharp
+// KeepAlive設定を変更
+client.KeepAlive = new KeepAliveConfig
+{
+    Enabled = true,
+    IntervalSeconds = 15,
+    Message = "HEARTBEAT\r"
+};
+
+// タイムアウトを変更
+client.TimeoutMilliseconds = 10000;
+
+// リトライポリシーを変更
+client.RetryPolicy = new RetryPolicy
+{
+    MaxRetryCount = 5,
+    RetryDelayStrategy = RetryDelayStrategy.Exponential,
+    InitialDelayMs = 1000,
+    MaxDelayMs = 30000
+};
+
+// 現在の設定を確認
+var currentKeepAlive = client.KeepAlive;
+if (currentKeepAlive != null)
+{
+    Console.WriteLine($"KeepAlive: Enabled={currentKeepAlive.Enabled}, Interval={currentKeepAlive.IntervalSeconds}s");
+}
+```
+
+**動作**:
+- KeepAlive設定を変更すると、接続中の場合、既存のタイマーが停止され、新しい設定で再起動されます
+- 設定変更はスレッドセーフに実装されています
+- プロパティから取得した設定オブジェクトはコピーなので、直接変更しても元の設定には影響しません
+
+**注意事項**:
+- リモートホスト/ポート、エンコーディングなど、接続に影響する設定は実行時に変更できません
+- 設定変更は即座に反映されます
+
 ### セッション管理
 
 サーバー側で接続されているクライアントのセッションを管理できます。
@@ -1189,5 +1335,6 @@ dotnet run
 - **サーバーモード**: ポート5000でリッスンし、クライアントからのメッセージをエコー
 - **クライアントモード**: localhost:5000に接続し、メッセージを送信
 - **統合モード**: サーバーとクライアントを同時に起動し、Promise的チェーン処理の例を実行
+- **動的設定変更**: `config`コマンドで実行時に設定を変更（KeepAlive、タイムアウト、リトライポリシーなど）
 
 詳細は [Samples/TcpMessenger.Sample/README.md](./Samples/TcpMessenger.Sample/README.md) を参照してください。
