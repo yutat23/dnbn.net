@@ -24,6 +24,15 @@ public class TcpServer : ITcpServer
   private readonly CancellationTokenSource _cancellationTokenSource = new();
   private bool _disposed = false;
 
+  // 統計情報追跡用フィールド
+  private DateTime? _startedAt;
+  private long _totalConnections = 0;
+  private DateTime? _lastClientConnectedAt;
+  private DateTime? _lastClientDisconnectedAt;
+  private long _messagesSent = 0;
+  private long _messagesReceived = 0;
+  private readonly object _statsLock = new();
+
   /// <summary>
   /// サーバー名
   /// </summary>
@@ -84,6 +93,10 @@ public class TcpServer : ITcpServer
 
     _listener = new TcpListener(IPAddress.Any, _config.ListenPort);
     _listener.Start();
+    lock (_statsLock)
+    {
+      _startedAt = DateTime.UtcNow;
+    }
     _logger?.LogInformation("TCP Server '{Name}' started on port {Port}", Name, _config.ListenPort);
 
     _ = Task.Run(AcceptClientsAsync, _cancellationTokenSource.Token);
@@ -109,6 +122,12 @@ public class TcpServer : ITcpServer
       await session.DisconnectAsync();
     }
     _sessions.Clear();
+
+    // 起動時刻をクリア（統計情報は保持）
+    lock (_statsLock)
+    {
+      _startedAt = null;
+    }
 
     _logger?.LogInformation("TCP Server '{Name}' stopped", Name);
   }
@@ -156,6 +175,8 @@ public class TcpServer : ITcpServer
 
     session.OnMessageReceived += (msg) =>
     {
+      // メッセージ受信統計を更新
+      Interlocked.Increment(ref _messagesReceived);
       OnMessageReceived?.Invoke(this, (msg, sessionInfo));
       _messageReceivedSubject.OnNext((msg, sessionInfo));
     };
@@ -163,6 +184,10 @@ public class TcpServer : ITcpServer
     session.OnDisconnected += () =>
     {
       _sessions.TryRemove(sessionId, out _);
+      lock (_statsLock)
+      {
+        _lastClientDisconnectedAt = DateTime.UtcNow;
+      }
       OnClientDisconnected?.Invoke(this, sessionInfo);
     };
 
@@ -172,6 +197,14 @@ public class TcpServer : ITcpServer
     };
 
     _sessions.TryAdd(sessionId, session);
+    
+    // 接続統計を更新
+    Interlocked.Increment(ref _totalConnections);
+    lock (_statsLock)
+    {
+      _lastClientConnectedAt = DateTime.UtcNow;
+    }
+    
     OnClientConnected?.Invoke(this, sessionInfo);
 
     await session.StartAsync();
@@ -192,6 +225,8 @@ public class TcpServer : ITcpServer
     if (_sessions.TryGetValue(sessionId, out var session))
     {
       await session.SendAsync(message);
+      // メッセージ送信統計を更新
+      Interlocked.Increment(ref _messagesSent);
     }
     else
     {
@@ -207,6 +242,12 @@ public class TcpServer : ITcpServer
   {
     var tasks = _sessions.Values.Select(s => s.SendAsync(message));
     await Task.WhenAll(tasks);
+    // メッセージ送信統計を更新（セッション数分）
+    var sessionCount = _sessions.Count;
+    if (sessionCount > 0)
+    {
+      Interlocked.Add(ref _messagesSent, sessionCount);
+    }
   }
 
   /// <summary>
@@ -226,6 +267,41 @@ public class TcpServer : ITcpServer
   public IEnumerable<SessionInfo> GetAllSessions()
   {
     return _sessions.Values.Select(s => s.SessionInfo);
+  }
+
+  /// <summary>
+  /// リッスンポート
+  /// </summary>
+  public int ListenPort => _config.ListenPort;
+
+  /// <summary>
+  /// 接続状態情報の取得
+  /// </summary>
+  public ServerConnectionInfo ConnectionInfo
+  {
+    get
+    {
+      lock (_statsLock)
+      {
+        var uptime = _startedAt.HasValue
+          ? DateTime.UtcNow - _startedAt.Value
+          : (TimeSpan?)null;
+
+        return new ServerConnectionInfo
+        {
+          IsRunning = IsRunning,
+          StartedAt = _startedAt,
+          Uptime = uptime,
+          ListenPort = _config.ListenPort,
+          ConnectionCount = _sessions.Count,
+          TotalConnections = Interlocked.Read(ref _totalConnections),
+          LastClientConnectedAt = _lastClientConnectedAt,
+          LastClientDisconnectedAt = _lastClientDisconnectedAt,
+          MessagesSent = Interlocked.Read(ref _messagesSent),
+          MessagesReceived = Interlocked.Read(ref _messagesReceived)
+        };
+      }
+    }
   }
 
   /// <summary>

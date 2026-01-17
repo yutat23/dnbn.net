@@ -30,6 +30,21 @@ public class TcpClient : ITcpClient
   private readonly object _reconnectLock = new();
   private readonly object _configLock = new();
 
+  // 統計情報追跡用フィールド
+  private DateTime? _connectedAt;
+  private DateTime? _lastMessageReceivedAt;
+  private long _messagesSent = 0;
+  private long _messagesReceived = 0;
+  private DateTime? _lastKeepAliveSentAt;
+  private DateTime? _lastKeepAliveResponseReceivedAt;
+  private int _keepAliveTimeoutCount = 0;
+  private int _errorCount = 0;
+  private string? _lastError;
+  private DateTime? _lastErrorAt;
+  private int _connectionRetryAttempts = 0;
+  private DateTime? _lastRetryAttemptAt;
+  private readonly object _statsLock = new();
+
   /// <summary>
   /// クライアント名
   /// </summary>
@@ -115,6 +130,11 @@ public class TcpClient : ITcpClient
           async () =>
           {
             await _transport.ConnectAsync();
+            lock (_statsLock)
+            {
+              _connectedAt = DateTime.UtcNow;
+              _connectionRetryAttempts = 0; // 接続成功時にリセット
+            }
             _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
             OnConnected?.Invoke(this, EventArgs.Empty);
@@ -136,6 +156,11 @@ public class TcpClient : ITcpClient
     {
       // リトライポリシーが設定されていない場合は、従来通り1回だけ試行
       await _transport.ConnectAsync();
+      lock (_statsLock)
+      {
+        _connectedAt = DateTime.UtcNow;
+        _connectionRetryAttempts = 0; // 接続成功時にリセット
+      }
       _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
       OnConnected?.Invoke(this, EventArgs.Empty);
@@ -168,6 +193,12 @@ public class TcpClient : ITcpClient
 
     _cancellationTokenSource.Cancel();
     await _transport.DisconnectAsync();
+
+    // 接続時刻をクリア（統計情報は保持）
+    lock (_statsLock)
+    {
+      _connectedAt = null;
+    }
 
     // 待機中のリクエストをキャンセル
     foreach (var pending in _pendingRequests.Values)
@@ -218,12 +249,23 @@ public class TcpClient : ITcpClient
             filteredMessage = await filter.OnReceivedAsync(filteredMessage, ctx);
           }
 
+          // 統計情報を更新
+          Interlocked.Increment(ref _messagesReceived);
+          lock (_statsLock)
+          {
+            _lastMessageReceivedAt = DateTime.UtcNow;
+          }
+
           // キープアライブ応答をチェック（優先的に処理）
           bool handled = false;
           var keepAliveTcs = Interlocked.Exchange(ref _keepAliveResponseTcs, null);
           if (keepAliveTcs != null)
           {
             keepAliveTcs.TrySetResult(filteredMessage);
+            lock (_statsLock)
+            {
+              _lastKeepAliveResponseReceivedAt = DateTime.UtcNow;
+            }
             OnKeepAliveResponseReceived?.Invoke(this, filteredMessage);
             handled = true;
           }
@@ -262,6 +304,13 @@ public class TcpClient : ITcpClient
         // 意図的な切断の場合はエラーログを出さない
         if (!_cancellationTokenSource.IsCancellationRequested)
         {
+          // エラー統計を更新
+          Interlocked.Increment(ref _errorCount);
+          lock (_statsLock)
+          {
+            _lastError = ex.Message;
+            _lastErrorAt = DateTime.UtcNow;
+          }
           _logger?.LogError(ex, "Error receiving data in client {Name}", Name);
           OnError?.Invoke(this, ex);
           // NW障害として扱う
@@ -305,6 +354,13 @@ public class TcpClient : ITcpClient
         return;
       }
 
+      // リトライ統計を更新
+      Interlocked.Increment(ref _connectionRetryAttempts);
+      lock (_statsLock)
+      {
+        _lastRetryAttemptAt = DateTime.UtcNow;
+      }
+
       _reconnectTask = Task.Run(async () =>
       {
         try
@@ -330,6 +386,11 @@ public class TcpClient : ITcpClient
 
                       // トランスポートを再接続
                       await _transport.ConnectAsync();
+                      lock (_statsLock)
+                      {
+                        _connectedAt = DateTime.UtcNow;
+                        _connectionRetryAttempts = 0; // 再接続成功時にリセット
+                      }
                       _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
                       // 新しいCancellationTokenSourceを作成（前のものはキャンセル済み）
@@ -367,6 +428,13 @@ public class TcpClient : ITcpClient
         }
         catch (Exception ex)
         {
+          // エラー統計を更新
+          Interlocked.Increment(ref _errorCount);
+          lock (_statsLock)
+          {
+            _lastError = ex.Message;
+            _lastErrorAt = DateTime.UtcNow;
+          }
           _logger?.LogError(ex, "TCP Client '{Name}' automatic reconnection failed", Name);
           OnError?.Invoke(this, ex);
         }
@@ -396,6 +464,9 @@ public class TcpClient : ITcpClient
     // MessageTerminatorを自動的に追加
     var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
     await _transport.SendAsync(dataToSend);
+    
+    // 統計情報を更新
+    Interlocked.Increment(ref _messagesSent);
   }
 
   /// <summary>
@@ -586,6 +657,12 @@ public class TcpClient : ITcpClient
       // MessageTerminatorを自動的に追加して送信
       var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
       await _transport.SendAsync(dataToSend);
+      
+      // キープアライブ送信時刻を更新
+      lock (_statsLock)
+      {
+        _lastKeepAliveSentAt = DateTime.UtcNow;
+      }
 
       // タイムアウト用のキャンセレーショントークン
       using var cts = new CancellationTokenSource(timeout);
@@ -606,6 +683,7 @@ public class TcpClient : ITcpClient
       catch (TaskCanceledException)
       {
         // タイムアウトは無視（キープアライブは継続）
+        Interlocked.Increment(ref _keepAliveTimeoutCount);
         _logger?.LogWarning("Keep-alive response timeout for client {Name}", Name);
       }
     }
@@ -829,6 +907,50 @@ public class TcpClient : ITcpClient
         {
           _logger?.LogInformation("TCP Client '{Name}' 接続リトライポリシーを無効化しました", Name);
         }
+      }
+    }
+  }
+
+  /// <summary>
+  /// 接続状態情報の取得
+  /// </summary>
+  public ClientConnectionInfo ConnectionInfo
+  {
+    get
+    {
+      lock (_statsLock)
+      {
+        var isReconnecting = false;
+        lock (_reconnectLock)
+        {
+          isReconnecting = _reconnectTask != null && !_reconnectTask.IsCompleted;
+        }
+
+        var connectionDuration = _connectedAt.HasValue
+          ? DateTime.UtcNow - _connectedAt.Value
+          : (TimeSpan?)null;
+
+        return new ClientConnectionInfo
+        {
+          IsConnected = IsConnected,
+          ConnectedAt = _connectedAt,
+          LastMessageReceivedAt = _lastMessageReceivedAt,
+          RemoteHost = _config.RemoteHost,
+          RemotePort = _config.RemotePort,
+          IsReconnecting = isReconnecting,
+          ConnectionDuration = connectionDuration,
+          MessagesSent = Interlocked.Read(ref _messagesSent),
+          MessagesReceived = Interlocked.Read(ref _messagesReceived),
+          PendingRequests = _pendingRequests.Count,
+          LastKeepAliveSentAt = _lastKeepAliveSentAt,
+          LastKeepAliveResponseReceivedAt = _lastKeepAliveResponseReceivedAt,
+          KeepAliveTimeoutCount = Interlocked.CompareExchange(ref _keepAliveTimeoutCount, 0, 0),
+          ErrorCount = Interlocked.CompareExchange(ref _errorCount, 0, 0),
+          LastError = _lastError,
+          LastErrorAt = _lastErrorAt,
+          ConnectionRetryAttempts = Interlocked.CompareExchange(ref _connectionRetryAttempts, 0, 0),
+          LastRetryAttemptAt = _lastRetryAttemptAt
+        };
       }
     }
   }

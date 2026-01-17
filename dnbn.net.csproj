@@ -27,6 +27,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Samples\**" />
+    <None Remove="Samples\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 

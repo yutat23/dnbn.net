@@ -6,9 +6,13 @@ using Dnbn.Logging;
 using Dnbn.Models;
 using log4net;
 using log4net.Config;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System.Reactive.Linq;
+using System.Text.Json;
 
 namespace TcpMessenger.Sample;
 
@@ -279,6 +283,13 @@ class Program
 
     await client.ConnectAsync();
     _log.Info("クライアントが接続しました。");
+
+    // HTTPエンドポイントを起動（接続状態情報をJSONで取得可能）
+    _ = Task.Run(async () => await StartHttpServer(server, client, _log));
+    _log.Info("HTTPエンドポイントが起動しました: http://localhost:8080");
+    _log.Info("  - GET /api/status -> 全接続状態情報を取得");
+    _log.Info("  - GET /api/status/client -> クライアント接続状態情報を取得");
+    _log.Info("  - GET /api/status/server -> サーバー接続状態情報を取得");
 
     // キューイング方式のSendAsyncの動作確認
     Console.WriteLine("\n=== キューイング方式のSendAsyncの動作確認 ===");
@@ -673,6 +684,187 @@ class Program
     };
 
     Console.WriteLine($"接続リトライポリシーを更新しました: MaxRetryCount={maxRetryCount}, Strategy={strategy}");
+  }
+
+  /// <summary>
+  /// HTTPサーバーを起動して接続状態情報をJSONで提供
+  /// </summary>
+  static async Task StartHttpServer(ITcpServer server, ITcpClient client, ILog log)
+  {
+    var builder = WebApplication.CreateBuilder();
+    
+    // CORSサービスを追加
+    builder.Services.AddCors(options =>
+    {
+      options.AddDefaultPolicy(policy =>
+      {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+      });
+    });
+    
+    var app = builder.Build();
+
+    // CORSミドルウェアを使用
+    app.UseCors();
+
+    // JSONシリアライザーオプション
+    var jsonOptions = new JsonSerializerOptions
+    {
+      WriteIndented = true,
+      PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    // 全接続状態情報を取得
+    app.MapGet("/api/status", () =>
+    {
+      var clientInfo = client.ConnectionInfo;
+      var serverInfo = server.ConnectionInfo;
+      var result = new
+      {
+        Client = new
+        {
+          Name = client.Name,
+          IsConnected = clientInfo.IsConnected,
+          ConnectedAt = clientInfo.ConnectedAt,
+          ConnectionDuration = clientInfo.ConnectionDuration?.ToString(@"dd\.hh\:mm\:ss"),
+          RemoteHost = clientInfo.RemoteHost,
+          RemotePort = clientInfo.RemotePort,
+          IsReconnecting = clientInfo.IsReconnecting,
+          MessagesSent = clientInfo.MessagesSent,
+          MessagesReceived = clientInfo.MessagesReceived,
+          PendingRequests = clientInfo.PendingRequests,
+          LastMessageReceivedAt = clientInfo.LastMessageReceivedAt,
+          KeepAlive = new
+          {
+            LastSentAt = clientInfo.LastKeepAliveSentAt,
+            LastResponseReceivedAt = clientInfo.LastKeepAliveResponseReceivedAt,
+            TimeoutCount = clientInfo.KeepAliveTimeoutCount
+          },
+          Error = new
+          {
+            Count = clientInfo.ErrorCount,
+            LastError = clientInfo.LastError,
+            LastErrorAt = clientInfo.LastErrorAt
+          },
+          ConnectionRetry = new
+          {
+            Attempts = clientInfo.ConnectionRetryAttempts,
+            LastAttemptAt = clientInfo.LastRetryAttemptAt
+          }
+        },
+        Server = new
+        {
+          Name = server.Name,
+          IsRunning = serverInfo.IsRunning,
+          ListenPort = serverInfo.ListenPort,
+          StartedAt = serverInfo.StartedAt,
+          Uptime = serverInfo.Uptime?.ToString(@"dd\.hh\:mm\:ss"),
+          ConnectionCount = serverInfo.ConnectionCount,
+          TotalConnections = serverInfo.TotalConnections,
+          LastClientConnectedAt = serverInfo.LastClientConnectedAt,
+          LastClientDisconnectedAt = serverInfo.LastClientDisconnectedAt,
+          MessagesSent = serverInfo.MessagesSent,
+          MessagesReceived = serverInfo.MessagesReceived,
+          Sessions = server.GetAllSessions().Select(s => new
+          {
+            SessionId = s.SessionId,
+            SourceEndpoint = s.SourceEndpoint.ToString(),
+            ConnectedAt = s.ConnectedAt,
+            LastMessageReceivedAt = s.LastMessageReceivedAt,
+            IsActive = s.IsActive
+          }).ToArray()
+        }
+      };
+      return Results.Json(result, jsonOptions);
+    });
+
+    // クライアント接続状態情報を取得
+    app.MapGet("/api/status/client", () =>
+    {
+      var info = client.ConnectionInfo;
+      var result = new
+      {
+        Name = client.Name,
+        IsConnected = info.IsConnected,
+        ConnectedAt = info.ConnectedAt,
+        ConnectionDuration = info.ConnectionDuration?.ToString(@"dd\.hh\:mm\:ss"),
+        RemoteHost = info.RemoteHost,
+        RemotePort = info.RemotePort,
+        IsReconnecting = info.IsReconnecting,
+        MessagesSent = info.MessagesSent,
+        MessagesReceived = info.MessagesReceived,
+        PendingRequests = info.PendingRequests,
+        LastMessageReceivedAt = info.LastMessageReceivedAt,
+        KeepAlive = new
+        {
+          LastSentAt = info.LastKeepAliveSentAt,
+          LastResponseReceivedAt = info.LastKeepAliveResponseReceivedAt,
+          TimeoutCount = info.KeepAliveTimeoutCount
+        },
+        Error = new
+        {
+          Count = info.ErrorCount,
+          LastError = info.LastError,
+          LastErrorAt = info.LastErrorAt
+        },
+        ConnectionRetry = new
+        {
+          Attempts = info.ConnectionRetryAttempts,
+          LastAttemptAt = info.LastRetryAttemptAt
+        }
+      };
+      return Results.Json(result, jsonOptions);
+    });
+
+    // サーバー接続状態情報を取得
+    app.MapGet("/api/status/server", () =>
+    {
+      var info = server.ConnectionInfo;
+      var result = new
+      {
+        Name = server.Name,
+        IsRunning = info.IsRunning,
+        ListenPort = info.ListenPort,
+        StartedAt = info.StartedAt,
+        Uptime = info.Uptime?.ToString(@"dd\.hh\:mm\:ss"),
+        ConnectionCount = info.ConnectionCount,
+        TotalConnections = info.TotalConnections,
+        LastClientConnectedAt = info.LastClientConnectedAt,
+        LastClientDisconnectedAt = info.LastClientDisconnectedAt,
+        MessagesSent = info.MessagesSent,
+        MessagesReceived = info.MessagesReceived,
+        Sessions = server.GetAllSessions().Select(s => new
+        {
+          SessionId = s.SessionId,
+          SourceEndpoint = s.SourceEndpoint.ToString(),
+          ConnectedAt = s.ConnectedAt,
+          LastMessageReceivedAt = s.LastMessageReceivedAt,
+          IsActive = s.IsActive
+        }).ToArray()
+      };
+      return Results.Json(result, jsonOptions);
+    });
+
+    // ヘルスチェックエンドポイント
+    app.MapGet("/api/health", () =>
+    {
+      return Results.Json(new
+      {
+        Status = "Healthy",
+        Timestamp = DateTime.UtcNow
+      }, jsonOptions);
+    });
+
+    try
+    {
+      await app.RunAsync("http://localhost:8080");
+    }
+    catch (Exception ex)
+    {
+      log.Error("HTTPサーバーの起動に失敗しました", ex);
+    }
   }
 }
 

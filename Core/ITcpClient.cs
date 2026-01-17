@@ -98,6 +98,11 @@ public interface ITcpClient : IDisposable
   /// 接続リトライポリシーの取得・設定
   /// </summary>
   RetryPolicy? ConnectionRetryPolicy { get; set; }
+
+  /// <summary>
+  /// 接続状態情報の取得
+  /// </summary>
+  ClientConnectionInfo ConnectionInfo { get; }
 }
 
 

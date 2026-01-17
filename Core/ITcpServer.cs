@@ -73,6 +73,16 @@ public interface ITcpServer : IDisposable
   /// 全セッション情報を取得
   /// </summary>
   IEnumerable<SessionInfo> GetAllSessions();
+
+  /// <summary>
+  /// リッスンポート
+  /// </summary>
+  int ListenPort { get; }
+
+  /// <summary>
+  /// 接続状態情報の取得
+  /// </summary>
+  ServerConnectionInfo ConnectionInfo { get; }
 }
 
 

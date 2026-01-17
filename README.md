@@ -492,6 +492,7 @@ TCPクライアントのインターフェイスです。
 |-----------|-----|------|
 | `Name` | `string` | クライアント名 |
 | `IsConnected` | `bool` | 接続状態 |
+| `ConnectionInfo` | `ClientConnectionInfo` | 接続状態情報（詳細は[ClientConnectionInfo](#clientconnectioninfo)を参照） |
 | `KeepAlive` | `KeepAliveConfig?` | KeepAlive設定の取得・設定（実行時に変更可能） |
 | `TimeoutMilliseconds` | `int` | タイムアウト設定の取得・設定（ミリ秒、実行時に変更可能） |
 | `RetryPolicy` | `RetryPolicy?` | リトライポリシーの取得・設定（実行時に変更可能） |
@@ -667,6 +668,8 @@ TCPサーバーのインターフェイスです。
 |-----------|-----|------|
 | `Name` | `string` | サーバー名 |
 | `IsRunning` | `bool` | サーバーが起動中かどうか |
+| `ListenPort` | `int` | リッスンポート |
+| `ConnectionInfo` | `ServerConnectionInfo` | 接続状態情報（詳細は[ServerConnectionInfo](#serverconnectioninfo)を参照） |
 
 #### イベント
 
@@ -829,6 +832,52 @@ TCPセッション情報を表すクラスです。
 | `LastMessageReceivedAt` | `DateTime?` | 最後のメッセージ受信時刻 |
 | `Metadata` | `Dictionary<string, object>` | 追加のセッションメタデータ |
 | `IsActive` | `bool` | セッションが有効かどうか |
+
+### ClientConnectionInfo
+
+TCPクライアントの接続状態情報を表すクラスです。
+
+#### プロパティ
+
+| プロパティ | 型 | 説明 |
+|-----------|-----|------|
+| `IsConnected` | `bool` | 接続状態 |
+| `ConnectedAt` | `DateTime?` | 接続開始時刻 |
+| `LastMessageReceivedAt` | `DateTime?` | 最後のメッセージ受信時刻 |
+| `RemoteHost` | `string` | リモートホスト（IPアドレスまたはホスト名） |
+| `RemotePort` | `int` | リモートポート |
+| `IsReconnecting` | `bool` | 再接続試行中かどうか |
+| `ConnectionDuration` | `TimeSpan?` | 接続継続時間（接続開始時刻から現在までの経過時間） |
+| `MessagesSent` | `long` | 送信メッセージ数 |
+| `MessagesReceived` | `long` | 受信メッセージ数 |
+| `PendingRequests` | `int` | 待機中のリクエスト数 |
+| `LastKeepAliveSentAt` | `DateTime?` | 最後のキープアライブ送信時刻 |
+| `LastKeepAliveResponseReceivedAt` | `DateTime?` | 最後のキープアライブ応答受信時刻 |
+| `KeepAliveTimeoutCount` | `int` | キープアライブタイムアウト回数 |
+| `ErrorCount` | `int` | エラー発生回数 |
+| `LastError` | `string?` | 最後のエラーメッセージ |
+| `LastErrorAt` | `DateTime?` | 最後のエラー発生時刻 |
+| `ConnectionRetryAttempts` | `int` | 接続リトライ試行回数 |
+| `LastRetryAttemptAt` | `DateTime?` | 最後のリトライ試行時刻 |
+
+### ServerConnectionInfo
+
+TCPサーバーの接続状態情報を表すクラスです。
+
+#### プロパティ
+
+| プロパティ | 型 | 説明 |
+|-----------|-----|------|
+| `IsRunning` | `bool` | サーバーが起動中かどうか |
+| `StartedAt` | `DateTime?` | 起動時刻 |
+| `Uptime` | `TimeSpan?` | 稼働時間（起動時刻から現在までの経過時間） |
+| `ListenPort` | `int` | リッスンポート |
+| `ConnectionCount` | `int` | 現在の接続数 |
+| `TotalConnections` | `long` | 累計接続数 |
+| `LastClientConnectedAt` | `DateTime?` | 最後のクライアント接続時刻 |
+| `LastClientDisconnectedAt` | `DateTime?` | 最後のクライアント切断時刻 |
+| `MessagesSent` | `long` | 送信メッセージ数（全セッション合計） |
+| `MessagesReceived` | `long` | 受信メッセージ数（全セッション合計） |
 
 ## 使用例
 
@@ -1057,6 +1106,143 @@ if (currentKeepAlive != null)
 **注意事項**:
 - リモートホスト/ポート、エンコーディングなど、接続に影響する設定は実行時に変更できません
 - 設定変更は即座に反映されます
+
+### 接続状態情報の取得
+
+クライアントとサーバーの接続状態情報を取得できます。
+
+**クライアント側の使用例**:
+
+```csharp
+// 接続状態情報を取得
+var info = client.ConnectionInfo;
+Console.WriteLine($"接続状態: {info.IsConnected}");
+Console.WriteLine($"接続開始時刻: {info.ConnectedAt}");
+Console.WriteLine($"接続継続時間: {info.ConnectionDuration}");
+Console.WriteLine($"送信メッセージ数: {info.MessagesSent}");
+Console.WriteLine($"受信メッセージ数: {info.MessagesReceived}");
+Console.WriteLine($"エラー発生回数: {info.ErrorCount}");
+if (info.LastError != null)
+{
+    Console.WriteLine($"最後のエラー: {info.LastError} ({info.LastErrorAt})");
+}
+```
+
+**サーバー側の使用例**:
+
+```csharp
+// 接続状態情報を取得
+var info = server.ConnectionInfo;
+Console.WriteLine($"サーバー状態: {info.IsRunning}");
+Console.WriteLine($"起動時刻: {info.StartedAt}");
+Console.WriteLine($"稼働時間: {info.Uptime}");
+Console.WriteLine($"現在の接続数: {info.ConnectionCount}");
+Console.WriteLine($"累計接続数: {info.TotalConnections}");
+Console.WriteLine($"送信メッセージ数: {info.MessagesSent}");
+Console.WriteLine($"受信メッセージ数: {info.MessagesReceived}");
+```
+
+**複数クライアント/サーバーの一覧表示例**:
+
+```csharp
+// 複数のクライアントの状態を一覧表示
+var clients = new[] { client1, client2, client3 };
+foreach (var client in clients)
+{
+    var info = client.ConnectionInfo;
+    Console.WriteLine($"{client.Name}: " +
+        $"接続={info.IsConnected}, " +
+        $"送信={info.MessagesSent}, " +
+        $"受信={info.MessagesReceived}, " +
+        $"エラー={info.ErrorCount}");
+}
+
+// 複数のサーバーの状態を一覧表示
+var servers = new[] { server1, server2 };
+foreach (var server in servers)
+{
+    var info = server.ConnectionInfo;
+    Console.WriteLine($"{server.Name}: " +
+        $"起動中={info.IsRunning}, " +
+        $"接続数={info.ConnectionCount}, " +
+        $"送信={info.MessagesSent}, " +
+        $"受信={info.MessagesReceived}");
+}
+```
+
+**HTTPエンドポイント経由での取得（サンプルプロジェクト）**:
+
+サンプルプロジェクトの統合モードでは、HTTPエンドポイント経由で接続状態情報をJSON形式で取得できます。
+
+```bash
+# 全接続状態情報を取得
+curl http://localhost:8080/api/status
+
+# クライアント接続状態情報を取得
+curl http://localhost:8080/api/status/client
+
+# サーバー接続状態情報を取得
+curl http://localhost:8080/api/status/server
+
+# ヘルスチェック
+curl http://localhost:8080/api/health
+```
+
+**レスポンス例**:
+
+```json
+{
+  "client": {
+    "name": "EchoClient",
+    "isConnected": true,
+    "connectedAt": "2024-01-01T12:00:00Z",
+    "connectionDuration": "00:05:30",
+    "remoteHost": "localhost",
+    "remotePort": 5000,
+    "isReconnecting": false,
+    "messagesSent": 100,
+    "messagesReceived": 100,
+    "pendingRequests": 0,
+    "lastMessageReceivedAt": "2024-01-01T12:05:25Z",
+    "keepAlive": {
+      "lastSentAt": "2024-01-01T12:05:30Z",
+      "lastResponseReceivedAt": "2024-01-01T12:05:30Z",
+      "timeoutCount": 0
+    },
+    "error": {
+      "count": 0,
+      "lastError": null,
+      "lastErrorAt": null
+    },
+    "connectionRetry": {
+      "attempts": 0,
+      "lastAttemptAt": null
+    }
+  },
+  "server": {
+    "name": "EchoServer",
+    "isRunning": true,
+    "listenPort": 5000,
+    "startedAt": "2024-01-01T12:00:00Z",
+    "uptime": "00:05:30",
+    "connectionCount": 1,
+    "totalConnections": 1,
+    "lastClientConnectedAt": "2024-01-01T12:00:01Z",
+    "lastClientDisconnectedAt": null,
+    "messagesSent": 100,
+    "messagesReceived": 100,
+    "sessions": [
+      {
+        "sessionId": "127.0.0.1:12345-abc123",
+        "sourceEndpoint": "127.0.0.1:12345",
+        "connectedAt": "2024-01-01T12:00:01Z",
+        "lastMessageReceivedAt": "2024-01-01T12:05:25Z",
+        "isActive": true
+      }
+    ]
+  }
+}
+```
 
 ### セッション管理
 
