@@ -84,12 +84,18 @@ public class TcpServer : ITcpServer
   /// <summary>
   /// サーバーを起動
   /// </summary>
-  public async Task StartAsync()
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task StartAsync(CancellationToken cancellationToken = default)
   {
     if (IsRunning)
     {
       return;
     }
+
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // 外部CancellationTokenと内部CancellationTokenSourceを統合
+    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
 
     _listener = new TcpListener(IPAddress.Any, _config.ListenPort);
     _listener.Start();
@@ -99,18 +105,21 @@ public class TcpServer : ITcpServer
     }
     _logger?.LogInformation("TCP Server '{Name}' started on port {Port}", Name, _config.ListenPort);
 
-    _ = Task.Run(AcceptClientsAsync, _cancellationTokenSource.Token);
+    _ = Task.Run(AcceptClientsAsync, linkedCts.Token);
   }
 
   /// <summary>
   /// サーバーを停止
   /// </summary>
-  public async Task StopAsync()
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task StopAsync(CancellationToken cancellationToken = default)
   {
     if (!IsRunning)
     {
       return;
     }
+
+    cancellationToken.ThrowIfCancellationRequested();
 
     _cancellationTokenSource.Cancel();
     _listener?.Stop();
@@ -220,11 +229,12 @@ public class TcpServer : ITcpServer
   /// </summary>
   /// <param name="sessionId">セッションID</param>
   /// <param name="message">送信するメッセージ</param>
-  public async Task SendAsync(string sessionId, Message message)
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task SendAsync(string sessionId, Message message, CancellationToken cancellationToken = default)
   {
     if (_sessions.TryGetValue(sessionId, out var session))
     {
-      await session.SendAsync(message);
+      await session.SendAsync(message, cancellationToken);
       // メッセージ送信統計を更新
       Interlocked.Increment(ref _messagesSent);
     }
@@ -238,9 +248,12 @@ public class TcpServer : ITcpServer
   /// 全セッションにメッセージをブロードキャスト
   /// </summary>
   /// <param name="message">送信するメッセージ</param>
-  public async Task BroadcastAsync(Message message)
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task BroadcastAsync(Message message, CancellationToken cancellationToken = default)
   {
-    var tasks = _sessions.Values.Select(s => s.SendAsync(message));
+    cancellationToken.ThrowIfCancellationRequested();
+
+    var tasks = _sessions.Values.Select(s => s.SendAsync(message, cancellationToken));
     await Task.WhenAll(tasks);
     // メッセージ送信統計を更新（セッション数分）
     var sessionCount = _sessions.Count;
@@ -428,12 +441,14 @@ public class TcpServer : ITcpServer
       OnDisconnected?.Invoke();
     }
 
-    public async Task SendAsync(Message message)
+    public async Task SendAsync(Message message, CancellationToken cancellationToken = default)
     {
       if (_stream == null || _tcpClient == null || !_tcpClient.Connected)
       {
         throw new InvalidOperationException("Not connected");
       }
+
+      cancellationToken.ThrowIfCancellationRequested();
 
       // フィルターパイプラインを適用
       var filteredMessage = message;
@@ -451,8 +466,11 @@ public class TcpServer : ITcpServer
 
       // MessageTerminatorを自動的に追加
       var data = AppendMessageTerminatorIfNeeded(filteredMessage);
-      await _stream.WriteAsync(data);
-      await _stream.FlushAsync();
+      
+      // 外部CancellationTokenと内部CancellationTokenSourceを統合
+      using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
+      await _stream.WriteAsync(data, linkedCts.Token);
+      await _stream.FlushAsync(linkedCts.Token);
     }
 
     public async Task DisconnectAsync(bool isIntentional = true)

@@ -47,22 +47,29 @@ public interface ITcpServer : IDisposable
   /// <summary>
   /// サーバーを起動する
   /// </summary>
-  Task StartAsync();
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task StartAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
   /// サーバーを停止する
   /// </summary>
-  Task StopAsync();
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task StopAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
   /// 特定セッションにメッセージを送信
   /// </summary>
-  Task SendAsync(string sessionId, Message message);
+  /// <param name="sessionId">セッションID（SessionInfo.SessionId）</param>
+  /// <param name="message">送信するメッセージ</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task SendAsync(string sessionId, Message message, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// 全セッションにメッセージを送信
   /// </summary>
-  Task BroadcastAsync(Message message);
+  /// <param name="message">送信するメッセージ</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task BroadcastAsync(Message message, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// セッション情報を取得

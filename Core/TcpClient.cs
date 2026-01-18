@@ -116,12 +116,18 @@ public class TcpClient : ITcpClient
   /// <summary>
   /// サーバーに接続
   /// </summary>
-  public async Task ConnectAsync()
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task ConnectAsync(CancellationToken cancellationToken = default)
   {
     if (IsConnected)
     {
       return;
     }
+
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // 外部CancellationTokenと内部CancellationTokenSourceを統合
+    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
 
     // 接続リトライポリシーが設定されている場合は、リトライを実行
     if (_config.ConnectionRetryPolicy != null)
@@ -129,7 +135,7 @@ public class TcpClient : ITcpClient
       await RetryHelper.ExecuteConnectionRetryAsync(
           async () =>
           {
-            await _transport.ConnectAsync();
+            await _transport.ConnectAsync(linkedCts.Token);
             lock (_statsLock)
             {
               _connectedAt = DateTime.UtcNow;
@@ -149,13 +155,13 @@ public class TcpClient : ITcpClient
             }
           },
           _config.ConnectionRetryPolicy,
-          _cancellationTokenSource.Token,
+          linkedCts.Token,
           _logger);
     }
     else
     {
       // リトライポリシーが設定されていない場合は、従来通り1回だけ試行
-      await _transport.ConnectAsync();
+      await _transport.ConnectAsync(linkedCts.Token);
       lock (_statsLock)
       {
         _connectedAt = DateTime.UtcNow;
@@ -180,19 +186,25 @@ public class TcpClient : ITcpClient
   /// サーバーから切断
   /// </summary>
   /// <param name="isIntentional">意図的な切断かどうか</param>
-  public async Task DisconnectAsync(bool isIntentional = true)
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task DisconnectAsync(bool isIntentional = true, CancellationToken cancellationToken = default)
   {
     if (!IsConnected)
     {
       return;
     }
 
+    cancellationToken.ThrowIfCancellationRequested();
+
     _isIntentionalDisconnect = isIntentional;
 
-    StopKeepAlive();
-
+    // CancellationTokenSourceを先にキャンセル（これによりキープアライブタイマーのElapsedイベント内のチェックが機能する）
     _cancellationTokenSource.Cancel();
-    await _transport.DisconnectAsync();
+    
+    // キープアライブを停止（タイマーを確実に停止）
+    StopKeepAlive();
+    
+    await _transport.DisconnectAsync(cancellationToken);
 
     // 接続時刻をクリア（統計情報は保持）
     lock (_statsLock)
@@ -227,7 +239,7 @@ public class TcpClient : ITcpClient
     {
       try
       {
-        var bytesRead = await _transport.ReceiveAsync(buffer, 0, buffer.Length);
+        var bytesRead = await _transport.ReceiveAsync(buffer, 0, buffer.Length, _cancellationTokenSource.Token);
         if (bytesRead == 0)
         {
           // 接続が閉じられた（NW障害）
@@ -391,7 +403,7 @@ public class TcpClient : ITcpClient
                       }
 
                       // トランスポートを再接続
-                      await _transport.ConnectAsync();
+                      await _transport.ConnectAsync(reconnectCts.Token);
                       lock (_statsLock)
                       {
                         _connectedAt = DateTime.UtcNow;
@@ -452,12 +464,15 @@ public class TcpClient : ITcpClient
   /// メッセージを送信（応答を待たない）
   /// </summary>
   /// <param name="message">送信するメッセージ</param>
-  public async Task SendAsync(Message message)
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task SendAsync(Message message, CancellationToken cancellationToken = default)
   {
     if (!IsConnected)
     {
       throw new InvalidOperationException("Not connected");
     }
+
+    cancellationToken.ThrowIfCancellationRequested();
 
     // フィルターパイプラインを適用
     var filteredMessage = message;
@@ -475,7 +490,7 @@ public class TcpClient : ITcpClient
 
     // MessageTerminatorを自動的に追加
     var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
-    await _transport.SendAsync(dataToSend);
+    await _transport.SendAsync(dataToSend, cancellationToken);
     
     // 統計情報を更新
     Interlocked.Increment(ref _messagesSent);
@@ -486,10 +501,11 @@ public class TcpClient : ITcpClient
   /// </summary>
   /// <param name="message">送信するメッセージ</param>
   /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
   /// <returns>受信した応答メッセージ</returns>
-  public async Task<Message> SendAsync(Message message, TimeSpan timeout)
+  public async Task<Message> SendAsync(Message message, TimeSpan timeout, CancellationToken cancellationToken = default)
   {
-    return await SendAndWaitAsync(message, _ => true, timeout);
+    return await SendAndWaitAsync(message, _ => true, timeout, cancellationToken);
   }
 
   /// <summary>
@@ -498,35 +514,43 @@ public class TcpClient : ITcpClient
   /// <param name="requestMessage">送信するメッセージ</param>
   /// <param name="responsePredicate">応答の条件判定関数</param>
   /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
   /// <returns>条件を満たす応答メッセージ</returns>
   public async Task<Message> SendAndWaitAsync(
       Message requestMessage,
       Func<Message, bool> responsePredicate,
-      TimeSpan timeout)
+      TimeSpan timeout,
+      CancellationToken cancellationToken = default)
   {
     if (!IsConnected)
     {
       throw new InvalidOperationException("Not connected");
     }
 
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // 外部CancellationTokenと内部CancellationTokenSourceを統合
+    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
+
     // リトライポリシーが設定されている場合は、それを使用
     if (_config.RetryPolicy != null)
     {
       return await RetryHelper.ExecuteWithRetryAsync(
-          async () => await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout),
+          async () => await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token),
           _config.RetryPolicy,
           responsePredicate,
-          _cancellationTokenSource.Token,
+          linkedCts.Token,
           _logger);
     }
 
-    return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout);
+    return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token);
   }
 
   private async Task<Message> SendAndWaitSingleAsync(
       Message requestMessage,
       Func<Message, bool> responsePredicate,
-      TimeSpan timeout)
+      TimeSpan timeout,
+      CancellationToken cancellationToken = default)
   {
     var requestId = Guid.NewGuid();
     var tcs = new TaskCompletionSource<Message>();
@@ -545,15 +569,18 @@ public class TcpClient : ITcpClient
     try
     {
       // 送信
-      await SendAsync(requestMessage);
+      await SendAsync(requestMessage, cancellationToken);
 
-      // タイムアウト用のキャンセレーショントークン
-      using var cts = new CancellationTokenSource(timeout);
+      // タイムアウト用のキャンセレーショントークンと外部CancellationTokenを統合
+      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+      timeoutCts.CancelAfter(timeout);
       var startTime = DateTime.UtcNow;
 
       // 応答条件を満たすメッセージが来るまで待つ
       while (true)
       {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var elapsed = DateTime.UtcNow - startTime;
         if (elapsed >= timeout)
         {
@@ -561,13 +588,13 @@ public class TcpClient : ITcpClient
         }
 
         var remainingTimeout = timeout - elapsed;
-        var waitTask = responseReceived.WaitAsync(remainingTimeout, cts.Token);
+        var waitTask = responseReceived.WaitAsync(remainingTimeout, timeoutCts.Token);
 
         try
         {
           await waitTask;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
           throw new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds");
         }
@@ -607,12 +634,24 @@ public class TcpClient : ITcpClient
       _keepAliveTimer = new System.Timers.Timer(_config.KeepAlive.IntervalSeconds * 1000);
       _keepAliveTimer.Elapsed += async (sender, e) =>
       {
+        // CancellationTokenがキャンセルされている場合はキープアライブを送信しない
+        if (_cancellationTokenSource.Token.IsCancellationRequested)
+        {
+          _keepAliveTimer?.Stop();
+          return;
+        }
+
         if (IsConnected && !_disposed)
         {
           try
           {
             var keepAliveMessage = Message.FromString(_config.KeepAlive.Message, GetEncoding(_config.Encoding));
             await SendKeepAliveAsync(keepAliveMessage, TimeSpan.FromSeconds(_config.KeepAlive.IntervalSeconds));
+          }
+          catch (OperationCanceledException)
+          {
+            // キャンセルされた場合はタイマーを停止
+            _keepAliveTimer?.Stop();
           }
           catch (Exception ex)
           {
@@ -629,9 +668,12 @@ public class TcpClient : ITcpClient
   {
     lock (_configLock)
     {
-      _keepAliveTimer?.Stop();
-      _keepAliveTimer?.Dispose();
-      _keepAliveTimer = null;
+      if (_keepAliveTimer != null)
+      {
+        _keepAliveTimer.Stop();
+        _keepAliveTimer.Dispose();
+        _keepAliveTimer = null;
+      }
     }
   }
 
@@ -674,7 +716,7 @@ public class TcpClient : ITcpClient
     {
       // MessageTerminatorを自動的に追加して送信
       var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
-      await _transport.SendAsync(dataToSend);
+      await _transport.SendAsync(dataToSend, _cancellationTokenSource.Token);
       
       // キープアライブ送信時刻を更新
       lock (_statsLock)

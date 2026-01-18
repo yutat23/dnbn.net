@@ -31,23 +31,29 @@ public class TcpTransport : ITransport, IDisposable
   /// <summary>
   /// サーバーに接続
   /// </summary>
-  public async Task ConnectAsync()
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task ConnectAsync(CancellationToken cancellationToken = default)
   {
     if (IsConnected)
     {
       return;
     }
 
+    cancellationToken.ThrowIfCancellationRequested();
+
     _tcpClient = new System.Net.Sockets.TcpClient();
-    await _tcpClient.ConnectAsync(_host, _port);
+    await _tcpClient.ConnectAsync(_host, _port, cancellationToken);
     _stream = _tcpClient.GetStream();
   }
 
   /// <summary>
   /// サーバーから切断
   /// </summary>
-  public async Task DisconnectAsync()
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task DisconnectAsync(CancellationToken cancellationToken = default)
   {
+    cancellationToken.ThrowIfCancellationRequested();
+
     if (_stream != null)
     {
       await _stream.DisposeAsync();
@@ -62,15 +68,18 @@ public class TcpTransport : ITransport, IDisposable
   /// データを送信
   /// </summary>
   /// <param name="data">送信するデータ</param>
-  public async Task SendAsync(byte[] data)
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task SendAsync(byte[] data, CancellationToken cancellationToken = default)
   {
     if (_stream == null || !IsConnected)
     {
       throw new InvalidOperationException("Not connected");
     }
 
-    await _stream.WriteAsync(data);
-    await _stream.FlushAsync();
+    cancellationToken.ThrowIfCancellationRequested();
+
+    await _stream.WriteAsync(data, cancellationToken);
+    await _stream.FlushAsync(cancellationToken);
   }
 
   /// <summary>
@@ -79,15 +88,16 @@ public class TcpTransport : ITransport, IDisposable
   /// <param name="buffer">受信バッファ</param>
   /// <param name="offset">オフセット</param>
   /// <param name="count">受信する最大バイト数</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
   /// <returns>実際に受信したバイト数</returns>
-  public async Task<int> ReceiveAsync(byte[] buffer, int offset, int count)
+  public async Task<int> ReceiveAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default)
   {
     if (_stream == null || !IsConnected)
     {
       throw new InvalidOperationException("Not connected");
     }
 
-    return await _stream.ReadAsync(buffer, offset, count);
+    return await _stream.ReadAsync(buffer, offset, count, cancellationToken);
   }
 
   /// <summary>

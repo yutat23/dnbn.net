@@ -11,7 +11,7 @@
     <Authors>dnbn.net</Authors>
     <Description>TCPメッセージ送受信ライブラリ</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>1.1.3</Version>
+    <Version>1.1.4</Version>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 

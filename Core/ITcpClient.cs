@@ -53,31 +53,43 @@ public interface ITcpClient : IDisposable
   /// <summary>
   /// 接続する
   /// </summary>
-  Task ConnectAsync();
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task ConnectAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
   /// 切断する
   /// </summary>
   /// <param name="isIntentional">意図的な切断かどうか（デフォルト: true）</param>
-  Task DisconnectAsync(bool isIntentional = true);
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task DisconnectAsync(bool isIntentional = true, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// メッセージを送信する
   /// </summary>
-  Task SendAsync(Message message);
+  /// <param name="message">送信するメッセージ</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task SendAsync(Message message, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// メッセージを送信して応答を待つ（簡易版：すべての応答を受け入れる）
   /// </summary>
-  Task<Message> SendAsync(Message message, TimeSpan timeout);
+  /// <param name="message">送信するメッセージ</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task<Message> SendAsync(Message message, TimeSpan timeout, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// メッセージを送信して応答を待つ
   /// </summary>
+  /// <param name="requestMessage">送信するメッセージ</param>
+  /// <param name="responsePredicate">応答の条件（trueを返す応答を受け入れる）</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
   Task<Message> SendAndWaitAsync(
       Message requestMessage,
       Func<Message, bool> responsePredicate,
-      TimeSpan timeout);
+      TimeSpan timeout,
+      CancellationToken cancellationToken = default);
 
   /// <summary>
   /// KeepAlive設定の取得・設定

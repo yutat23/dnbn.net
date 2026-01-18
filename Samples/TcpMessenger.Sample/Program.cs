@@ -105,6 +105,17 @@ class Program
     Console.WriteLine("\n=== サーバーモード ===");
     var server = factory.CreateServer("EchoServer");
 
+    // CancellationTokenを使用してアプリケーションのシャットダウン時に適切に停止できるようにする
+    using var cts = new CancellationTokenSource();
+
+    // Ctrl-Cを検出してクリーンアップ
+    Console.CancelKeyPress += (sender, e) =>
+    {
+      e.Cancel = true; // デフォルトの終了処理をキャンセル
+      _log.Info("Ctrl-Cが検出されました。サーバーを停止します...");
+      cts.Cancel();
+    };
+
     // イベントハンドラを設定
     server.OnClientConnected += (sender, sessionInfo) =>
     {
@@ -121,9 +132,9 @@ class Program
       var (message, sessionInfo) = args;
       _log.Info($"受信 [{sessionInfo.SessionId}]: {message.Text?.Trim()}");
 
-      // エコー応答を送信
+      // エコー応答を送信（CancellationTokenを使用）
       var response = Message.FromString($"ECHO: {message.Text}", System.Text.Encoding.UTF8);
-      await server.SendAsync(sessionInfo.SessionId, response);
+      await server.SendAsync(sessionInfo.SessionId, response, cts.Token);
       _log.Info($"送信 [{sessionInfo.SessionId}]: {response.Text?.Trim()}");
     };
 
@@ -142,17 +153,53 @@ class Program
           _log.Warn($"アラート受信 [{sessionInfo.SessionId}]: {message.Text}");
         });
 
-    await server.StartAsync();
+    await server.StartAsync(cts.Token);
     _log.Info("サーバーがポート 5000 で起動しました。");
 
-    Console.WriteLine("\nサーバーを停止するには 'q' を入力してください。");
-    while (true)
+    Console.WriteLine("\nサーバーを停止するには 'q' を入力するか、Ctrl-Cを押してください。");
+    try
     {
-      var input = Console.ReadLine();
-      if (input?.ToLower() == "q")
+      while (!cts.Token.IsCancellationRequested)
       {
-        await server.StopAsync();
-        break;
+        // Console.ReadLine()はキャンセルできないため、別スレッドで実行
+        var readTask = Task.Run(() => Console.ReadLine());
+        var cancelTask = Task.Delay(TimeSpan.FromMilliseconds(int.MaxValue), cts.Token).ContinueWith(_ => (string?)null);
+        var completedTask = await Task.WhenAny(readTask, cancelTask);
+        
+        if (completedTask == readTask)
+        {
+          var input = await readTask;
+          if (input?.ToLower() == "q")
+          {
+            cts.Cancel();
+            break;
+          }
+        }
+        else
+        {
+          // キャンセルされた
+          break;
+        }
+      }
+    }
+    catch (OperationCanceledException)
+    {
+      // Ctrl-Cでキャンセルされた場合
+    }
+    finally
+    {
+      if (server.IsRunning)
+      {
+        _log.Info("サーバーを停止しています...");
+        try
+        {
+          await server.StopAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+          _log.Error("サーバー停止中にエラーが発生しました", ex);
+        }
+        _log.Info("サーバーを停止しました。");
       }
     }
   }
@@ -166,6 +213,17 @@ class Program
     Console.WriteLine("メッセージ送受信ログが有効になっています（appsettings.jsonのEnableMessageLogging: true）");
     Console.WriteLine("DEBUGレベルのログでメッセージの送受信が出力されます。\n");
     var client = factory.CreateClient("EchoClient");
+
+    // CancellationTokenを使用してアプリケーションのシャットダウン時に適切に切断できるようにする
+    using var cts = new CancellationTokenSource();
+
+    // Ctrl-Cを検出してクリーンアップ
+    Console.CancelKeyPress += (sender, e) =>
+    {
+      e.Cancel = true; // デフォルトの終了処理をキャンセル
+      _log.Info("Ctrl-Cが検出されました。接続を切断します...");
+      cts.Cancel();
+    };
 
     // イベントハンドラを設定
     client.OnConnected += (sender, args) =>
@@ -204,43 +262,82 @@ class Program
           _log.Info($"[Observable] エコー応答: {msg.Text}");
         });
 
-    await client.ConnectAsync();
+    await client.ConnectAsync(cts.Token);
 
-    Console.WriteLine("\nメッセージを入力してください（終了するには 'quit' を入力）:");
+    Console.WriteLine("\nメッセージを入力してください（終了するには 'quit' を入力するか、Ctrl-Cを押してください）:");
     Console.WriteLine("設定変更: 'config' と入力");
-    while (true)
+    try
     {
-      var input = Console.ReadLine();
-      if (string.IsNullOrWhiteSpace(input))
+      while (!cts.Token.IsCancellationRequested)
       {
-        continue;
-      }
+        // Console.ReadLine()はキャンセルできないため、別スレッドで実行
+        var readTask = Task.Run(() => Console.ReadLine());
+        var cancelTask = Task.Delay(TimeSpan.FromMilliseconds(int.MaxValue), cts.Token).ContinueWith(_ => (string?)null);
+        var completedTask = await Task.WhenAny(readTask, cancelTask);
+        
+        if (completedTask == readTask)
+        {
+          var input = await readTask;
+          if (string.IsNullOrWhiteSpace(input))
+          {
+            continue;
+          }
 
-      if (input.ToLower() == "quit")
-      {
-        break;
-      }
+          if (input.ToLower() == "quit")
+          {
+            cts.Cancel();
+            break;
+          }
 
-      if (input.ToLower().StartsWith("config"))
-      {
-        await HandleConfigCommand(client, input, _log);
-        continue;
-      }
+          if (input.ToLower().StartsWith("config"))
+          {
+            await HandleConfigCommand(client, input, _log);
+            continue;
+          }
 
-      try
-      {
-        var message = Message.FromString($"{input}".Replace(@"\r", "\r"), System.Text.Encoding.UTF8);
-        var response = await client.SendAsync(message, TimeSpan.FromSeconds(5));
-        _log.Info($"送信: {input}");
-        _log.Info($"応答: {response.Text?.Trim()}");
-      }
-      catch (Exception ex)
-      {
-        _log.Error("送信エラー", ex);
+          try
+          {
+            var message = Message.FromString($"{input}".Replace(@"\r", "\r"), System.Text.Encoding.UTF8);
+            var response = await client.SendAsync(message, TimeSpan.FromSeconds(5), cts.Token);
+            _log.Info($"送信: {input}");
+            _log.Info($"応答: {response.Text?.Trim()}");
+          }
+          catch (OperationCanceledException)
+          {
+            break;
+          }
+          catch (Exception ex)
+          {
+            _log.Error("送信エラー", ex);
+          }
+        }
+        else
+        {
+          // キャンセルされた
+          break;
+        }
       }
     }
-
-    await client.DisconnectAsync(true);
+    catch (OperationCanceledException)
+    {
+      // Ctrl-Cでキャンセルされた場合
+    }
+    finally
+    {
+      if (client.IsConnected)
+      {
+        _log.Info("接続を切断しています...");
+        try
+        {
+          await client.DisconnectAsync(true, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+          _log.Error("切断中にエラーが発生しました", ex);
+        }
+        _log.Info("接続を切断しました。");
+      }
+    }
   }
 
   /// <summary>
@@ -252,6 +349,17 @@ class Program
     Console.WriteLine("メッセージ送受信ログが有効になっています（appsettings.jsonのEnableMessageLogging: true）");
     Console.WriteLine("DEBUGレベルのログでメッセージの送受信が出力されます。\n");
 
+    // CancellationTokenを使用してアプリケーションのシャットダウン時に適切に停止できるようにする
+    using var cts = new CancellationTokenSource();
+
+    // Ctrl-Cを検出してクリーンアップ
+    Console.CancelKeyPress += (sender, e) =>
+    {
+      e.Cancel = true; // デフォルトの終了処理をキャンセル
+      _log.Info("Ctrl-Cが検出されました。接続を切断してサーバーを停止します...");
+      cts.Cancel();
+    };
+
     // サーバーを起動
     var server = factory.CreateServer("EchoServer");
     server.OnMessageReceived += async (sender, args) =>
@@ -259,16 +367,16 @@ class Program
       var (message, sessionInfo) = args;
       _log.Info($"[Server] 受信: {message.Text?.Trim()}");
 
-      // 応答を送信
+      // 応答を送信（CancellationTokenを使用）
       var response = Message.FromString($"OK: {message.Text}", System.Text.Encoding.UTF8);
-      await server.SendAsync(sessionInfo.SessionId, response);
+      await server.SendAsync(sessionInfo.SessionId, response, cts.Token);
     };
 
-    await server.StartAsync();
+    await server.StartAsync(cts.Token);
     _log.Info("サーバーが起動しました。");
 
     // 少し待ってからクライアントを接続
-    await Task.Delay(500);
+    await Task.Delay(500, cts.Token);
 
     // クライアントを作成して接続
     var client = factory.CreateClient("EchoClient");
@@ -285,7 +393,7 @@ class Program
       // 例えば、応答内容に基づいて状態を更新するなど
     };
 
-    await client.ConnectAsync();
+    await client.ConnectAsync(cts.Token);
     _log.Info("クライアントが接続しました。");
 
     // HTTPエンドポイントを起動（接続状態情報をJSONで取得可能）
@@ -318,7 +426,7 @@ class Program
       {
         var msg = Message.FromString($"{msgText}\r\n", System.Text.Encoding.UTF8);
         var sendStart = DateTime.UtcNow;
-        var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
+        var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5), cts.Token);
         var sendEnd = DateTime.UtcNow;
 
         _log.Info($"[送信] {msgText} -> [応答] {response.Text?.Trim()} (所要時間: {(sendEnd - sendStart).TotalMilliseconds}ms)");
@@ -348,13 +456,13 @@ class Program
     {
       var initMessage = Message.FromString("INIT\r\n", System.Text.Encoding.UTF8);
 
-      // SendAsyncで送信して応答を待つ
-      var firstResponse = await client.SendAsync(initMessage, TimeSpan.FromSeconds(3));
+      // SendAsyncで送信して応答を待つ（CancellationTokenを使用）
+      var firstResponse = await client.SendAsync(initMessage, TimeSpan.FromSeconds(3), cts.Token);
       _log.Info($"初期化応答: {firstResponse.Text}");
 
       // 次のリクエストを送信
       var nextMessage = Message.FromString($"NEXT: {firstResponse.Text}\r\n", System.Text.Encoding.UTF8);
-      var finalResponse = await client.SendAsync(nextMessage, TimeSpan.FromSeconds(3));
+      var finalResponse = await client.SendAsync(nextMessage, TimeSpan.FromSeconds(3), cts.Token);
 
       _log.Info($"最終応答: {finalResponse.Text}");
       _log.Info("チェーン処理が完了しました。");
@@ -366,52 +474,105 @@ class Program
 
     // 対話的なメッセージ送信（キューイング方式）
     Console.WriteLine("\n=== 対話的なメッセージ送信（キューイング方式） ===");
-    Console.WriteLine("メッセージを入力してください（終了するには 'quit' を入力）:");
+    Console.WriteLine("メッセージを入力してください（終了するには 'quit' を入力するか、Ctrl-Cを押してください）:");
     Console.WriteLine("複数のメッセージを連続で送信すると、順次処理されます。");
     Console.WriteLine("応答は戻り値で取得でき、OnMessageReceivedイベントは発行されません。");
     Console.WriteLine("設定変更: 'config' と入力\n");
 
-    while (true)
+    try
     {
-      var input = Console.ReadLine();
-      if (string.IsNullOrWhiteSpace(input))
+      while (!cts.Token.IsCancellationRequested)
       {
-        continue;
-      }
+        // Console.ReadLine()はキャンセルできないため、別スレッドで実行
+        var readTask = Task.Run(() => Console.ReadLine());
+        var cancelTask = Task.Delay(TimeSpan.FromMilliseconds(int.MaxValue), cts.Token).ContinueWith(_ => (string?)null);
+        var completedTask = await Task.WhenAny(readTask, cancelTask);
+        
+        if (completedTask == readTask)
+        {
+          var input = await readTask;
+          if (string.IsNullOrWhiteSpace(input))
+          {
+            continue;
+          }
 
-      if (input.ToLower() == "quit")
-      {
-        break;
-      }
+          if (input.ToLower() == "quit")
+          {
+            cts.Cancel();
+            break;
+          }
 
-      if (input.ToLower().StartsWith("config"))
-      {
-        await HandleConfigCommand(client, input, _log);
-        continue;
-      }
+          if (input.ToLower().StartsWith("config"))
+          {
+            await HandleConfigCommand(client, input, _log);
+            continue;
+          }
 
-      try
-      {
-        var sendStart = DateTime.UtcNow;
-        var message = Message.FromString($"{input}".Replace(@"\r", "\r"), System.Text.Encoding.UTF8);
-        var response = await client.SendAsync(message, TimeSpan.FromSeconds(5));
-        var sendEnd = DateTime.UtcNow;
+          try
+          {
+            var sendStart = DateTime.UtcNow;
+            var message = Message.FromString($"{input}".Replace(@"\r", "\r"), System.Text.Encoding.UTF8);
+            var response = await client.SendAsync(message, TimeSpan.FromSeconds(5), cts.Token);
+            var sendEnd = DateTime.UtcNow;
 
-        _log.Info($"[送信] {input}");
-        _log.Info($"[応答] {response.Text?.Trim()} (所要時間: {(sendEnd - sendStart).TotalMilliseconds}ms)");
-      }
-      catch (TimeoutException ex)
-      {
-        _log.Error($"タイムアウト: {ex.Message}", ex);
-      }
-      catch (Exception ex)
-      {
-        _log.Error("送信エラー", ex);
+            _log.Info($"[送信] {input}");
+            _log.Info($"[応答] {response.Text?.Trim()} (所要時間: {(sendEnd - sendStart).TotalMilliseconds}ms)");
+          }
+          catch (OperationCanceledException)
+          {
+            break;
+          }
+          catch (TimeoutException ex)
+          {
+            _log.Error($"タイムアウト: {ex.Message}", ex);
+          }
+          catch (Exception ex)
+          {
+            _log.Error("送信エラー", ex);
+          }
+        }
+        else
+        {
+          // キャンセルされた
+          break;
+        }
       }
     }
+    catch (OperationCanceledException)
+    {
+      // Ctrl-Cでキャンセルされた場合
+    }
+    finally
+    {
+      // クリーンアップ: クライアントとサーバーを適切に切断・停止
+      if (client.IsConnected)
+      {
+        _log.Info("クライアント接続を切断しています...");
+        try
+        {
+          await client.DisconnectAsync(true, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+          _log.Error("クライアント切断中にエラーが発生しました", ex);
+        }
+        _log.Info("クライアント接続を切断しました。");
+      }
 
-    await client.DisconnectAsync();
-    await server.StopAsync();
+      if (server.IsRunning)
+      {
+        _log.Info("サーバーを停止しています...");
+        try
+        {
+          await server.StopAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+          _log.Error("サーバー停止中にエラーが発生しました", ex);
+        }
+        _log.Info("サーバーを停止しました。");
+      }
+    }
   }
 
   /// <summary>
