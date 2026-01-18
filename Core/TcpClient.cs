@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using System.Reactive.Subjects;
 using System.Text;
 using System.Timers;
@@ -20,7 +21,12 @@ public class TcpClient : ITcpClient
   private readonly ITransport _transport;
   private readonly MessageParser _parser;
   private readonly Subject<Message> _messageReceivedSubject = new();
-  private readonly ConcurrentDictionary<Guid, TaskCompletionSource<Message>> _pendingRequests = new();
+  private readonly Channel<SendRequest> _sendQueue;
+  private readonly ChannelWriter<SendRequest> _sendQueueWriter;
+  private readonly ChannelReader<SendRequest> _sendQueueReader;
+  private Task? _sendLoopTask;
+  private readonly Queue<SendRequest> _pendingResponseRequests = new();
+  private readonly object _pendingResponseRequestsLock = new();
   private System.Timers.Timer? _keepAliveTimer;
   private CancellationTokenSource _cancellationTokenSource = new();
   private bool _disposed = false;
@@ -111,6 +117,16 @@ public class TcpClient : ITcpClient
         config.FixedBodyLength,
         config.LengthFieldOffset,
         config.LengthFieldLength);
+
+    // 送信キューを初期化
+    var channelOptions = new BoundedChannelOptions(1000)
+    {
+      FullMode = BoundedChannelFullMode.Wait
+    };
+    var channel = Channel.CreateBounded<SendRequest>(channelOptions);
+    _sendQueue = channel;
+    _sendQueueWriter = channel.Writer;
+    _sendQueueReader = channel.Reader;
   }
 
   /// <summary>
@@ -145,6 +161,9 @@ public class TcpClient : ITcpClient
 
             OnConnected?.Invoke(this, EventArgs.Empty);
 
+            // 送信ループを開始
+            _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
+
             // 受信ループを開始
             _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
 
@@ -170,6 +189,9 @@ public class TcpClient : ITcpClient
       _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
       OnConnected?.Invoke(this, EventArgs.Empty);
+
+      // 送信ループを開始
+      _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
 
       // 受信ループを開始
       _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
@@ -204,6 +226,26 @@ public class TcpClient : ITcpClient
     // キープアライブを停止（タイマーを確実に停止）
     StopKeepAlive();
     
+    // 送信キューを閉じる
+    _sendQueueWriter.Complete();
+    
+    // 送信ループの完了を待つ
+    if (_sendLoopTask != null)
+    {
+      try
+      {
+        await _sendLoopTask;
+      }
+      catch (OperationCanceledException)
+      {
+        // 正常な終了
+      }
+      catch (Exception ex)
+      {
+        _logger?.LogError(ex, "Error waiting for send loop to complete in client {Name}", Name);
+      }
+    }
+    
     await _transport.DisconnectAsync(cancellationToken);
 
     // 接続時刻をクリア（統計情報は保持）
@@ -213,11 +255,17 @@ public class TcpClient : ITcpClient
     }
 
     // 待機中のリクエストをキャンセル
-    foreach (var pending in _pendingRequests.Values)
+    lock (_pendingResponseRequestsLock)
     {
-      pending.TrySetCanceled();
+      while (_pendingResponseRequests.Count > 0)
+      {
+        var request = _pendingResponseRequests.Dequeue();
+        if (request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
+        {
+          request.ResponseTcs.TrySetCanceled();
+        }
+      }
     }
-    _pendingRequests.Clear();
 
     if (isIntentional)
     {
@@ -288,18 +336,56 @@ public class TcpClient : ITcpClient
             handled = true;
           }
 
-          // 待機中のリクエストをチェック
+          // 待機中のリクエストをFIFO順序でチェック
           if (!handled)
           {
-            foreach (var kvp in _pendingRequests.ToList())
+            lock (_pendingResponseRequestsLock)
             {
-              // 最初の待機中のリクエストにメッセージを渡す
-              // 応答条件のチェックはSendAndWaitAsync側で行う
-              if (_pendingRequests.TryRemove(kvp.Key, out var tcs))
+              // タイムアウトしたリクエストを削除
+              var now = DateTime.UtcNow;
+              var tempQueue = new Queue<SendRequest>();
+              while (_pendingResponseRequests.Count > 0)
               {
-                tcs.TrySetResult(filteredMessage);
-                handled = true;
-                break;
+                var request = _pendingResponseRequests.Dequeue();
+                var elapsed = now - request.EnqueuedAt;
+                if (elapsed >= request.Timeout && request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
+                {
+                  // タイムアウト
+                  request.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {request.Timeout.TotalSeconds} seconds"));
+                  continue;
+                }
+                tempQueue.Enqueue(request);
+              }
+              while (tempQueue.Count > 0)
+              {
+                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
+              }
+
+              // FIFO順序で応答をマッチング
+              tempQueue = new Queue<SendRequest>();
+              while (_pendingResponseRequests.Count > 0)
+              {
+                var request = _pendingResponseRequests.Dequeue();
+                if (request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
+                {
+                  // responsePredicateで応答を判定
+                  if (request.ResponsePredicate == null || request.ResponsePredicate(filteredMessage))
+                  {
+                    request.ResponseTcs.TrySetResult(filteredMessage);
+                    handled = true;
+                    break;
+                  }
+                  else
+                  {
+                    // 条件を満たさない場合はキューに戻す
+                    tempQueue.Enqueue(request);
+                  }
+                }
+              }
+              // 残りのリクエストをキューに戻す
+              while (tempQueue.Count > 0)
+              {
+                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
               }
             }
           }
@@ -356,6 +442,110 @@ public class TcpClient : ITcpClient
     {
       _logger?.LogInformation("TCP Client '{Name}' will attempt automatic reconnection...", Name);
       StartAutoReconnect();
+    }
+  }
+
+  /// <summary>
+  /// 送信ループ（順次処理）
+  /// </summary>
+  private async Task SendLoopAsync()
+  {
+    try
+    {
+      await foreach (var request in _sendQueueReader.ReadAllAsync(_cancellationTokenSource.Token))
+      {
+        try
+        {
+          // 応答待ちのリクエストの場合は、キューに追加
+          if (request.ResponseTcs != null)
+          {
+            lock (_pendingResponseRequestsLock)
+            {
+              _pendingResponseRequests.Enqueue(request);
+            }
+          }
+
+          // フィルターパイプラインを適用
+          var filteredMessage = request.Message;
+          foreach (var filter in _filters)
+          {
+            var ctx = new MessageContext(null, false);
+            filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
+          }
+
+          // メッセージログ出力（設定が有効な場合）
+          if (_config.EnableMessageLogging)
+          {
+            _logger?.LogDebug("TCP Client '{Name}' sending message: {MessageText}", Name, filteredMessage.Text?.Trim());
+          }
+
+          // MessageTerminatorを自動的に追加
+          var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
+          await _transport.SendAsync(dataToSend, request.CancellationToken);
+
+          // 統計情報を更新
+          Interlocked.Increment(ref _messagesSent);
+        }
+        catch (OperationCanceledException)
+        {
+          // キャンセルされた場合は、応答待ちのリクエストをキャンセル
+          if (request.ResponseTcs != null)
+          {
+            lock (_pendingResponseRequestsLock)
+            {
+              // キューから削除
+              var tempQueue = new Queue<SendRequest>();
+              while (_pendingResponseRequests.Count > 0)
+              {
+                var item = _pendingResponseRequests.Dequeue();
+                if (item != request)
+                {
+                  tempQueue.Enqueue(item);
+                }
+              }
+              while (tempQueue.Count > 0)
+              {
+                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
+              }
+            }
+            request.ResponseTcs.TrySetCanceled();
+          }
+        }
+        catch (Exception ex)
+        {
+          // エラーハンドリング
+          if (request.ResponseTcs != null)
+          {
+            lock (_pendingResponseRequestsLock)
+            {
+              // キューから削除
+              var tempQueue = new Queue<SendRequest>();
+              while (_pendingResponseRequests.Count > 0)
+              {
+                var item = _pendingResponseRequests.Dequeue();
+                if (item != request)
+                {
+                  tempQueue.Enqueue(item);
+                }
+              }
+              while (tempQueue.Count > 0)
+              {
+                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
+              }
+            }
+            request.ResponseTcs.TrySetException(ex);
+          }
+          _logger?.LogError(ex, "Error sending message in client {Name}", Name);
+        }
+      }
+    }
+    catch (OperationCanceledException)
+    {
+      // 正常な終了
+    }
+    catch (Exception ex)
+    {
+      _logger?.LogError(ex, "Send loop error in client {Name}", Name);
     }
   }
 
@@ -427,6 +617,9 @@ public class TcpClient : ITcpClient
 
                       OnConnected?.Invoke(this, EventArgs.Empty);
 
+                      // 送信ループを再開
+                      _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
+
                       // 受信ループを再開
                       _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
 
@@ -474,26 +667,15 @@ public class TcpClient : ITcpClient
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    // フィルターパイプラインを適用
-    var filteredMessage = message;
-    foreach (var filter in _filters)
+    var request = new SendRequest
     {
-      var ctx = new MessageContext(null, false);
-      filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
-    }
+      Message = message,
+      ResponseTcs = null, // 応答不要
+      EnqueuedAt = DateTime.UtcNow,
+      CancellationToken = cancellationToken
+    };
 
-    // メッセージログ出力（設定が有効な場合）
-    if (_config.EnableMessageLogging)
-    {
-      _logger?.LogDebug("TCP Client '{Name}' sending message: {MessageText}", Name, filteredMessage.Text?.Trim());
-    }
-
-    // MessageTerminatorを自動的に追加
-    var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
-    await _transport.SendAsync(dataToSend, cancellationToken);
-    
-    // 統計情報を更新
-    Interlocked.Increment(ref _messagesSent);
+    await _sendQueueWriter.WriteAsync(request, cancellationToken);
   }
 
   /// <summary>
@@ -552,69 +734,49 @@ public class TcpClient : ITcpClient
       TimeSpan timeout,
       CancellationToken cancellationToken = default)
   {
-    var requestId = Guid.NewGuid();
     var tcs = new TaskCompletionSource<Message>();
-    var responseQueue = new ConcurrentQueue<Message>();
-    var responseReceived = new SemaphoreSlim(0);
-
-    // 応答メッセージを受信するイベントハンドラ
-    void OnResponseReceived(object? sender, Message msg)
+    var request = new SendRequest
     {
-      responseQueue.Enqueue(msg);
-      responseReceived.Release();
-    }
+      Message = requestMessage,
+      ResponseTcs = tcs,
+      ResponsePredicate = responsePredicate,
+      Timeout = timeout,
+      EnqueuedAt = DateTime.UtcNow,
+      CancellationToken = cancellationToken
+    };
 
-    OnMessageReceived += OnResponseReceived;
-
-    try
+    // タイムアウト処理
+    using var timeoutCts = new CancellationTokenSource(timeout);
+    timeoutCts.Token.Register(() =>
     {
-      // 送信
-      await SendAsync(requestMessage, cancellationToken);
-
-      // タイムアウト用のキャンセレーショントークンと外部CancellationTokenを統合
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(timeout);
-      var startTime = DateTime.UtcNow;
-
-      // 応答条件を満たすメッセージが来るまで待つ
-      while (true)
+      if (!tcs.Task.IsCompleted)
       {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var elapsed = DateTime.UtcNow - startTime;
-        if (elapsed >= timeout)
+        // キューから削除
+        lock (_pendingResponseRequestsLock)
         {
-          throw new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds");
-        }
-
-        var remainingTimeout = timeout - elapsed;
-        var waitTask = responseReceived.WaitAsync(remainingTimeout, timeoutCts.Token);
-
-        try
-        {
-          await waitTask;
-        }
-        catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-          throw new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds");
-        }
-
-        // キューからメッセージを取得
-        while (responseQueue.TryDequeue(out var response))
-        {
-          if (responsePredicate(response))
+          var tempQueue = new Queue<SendRequest>();
+          while (_pendingResponseRequests.Count > 0)
           {
-            return response;
+            var item = _pendingResponseRequests.Dequeue();
+            if (item != request)
+            {
+              tempQueue.Enqueue(item);
+            }
           }
-          // 条件を満たさない場合は、次のメッセージを待つ
+          while (tempQueue.Count > 0)
+          {
+            _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
+          }
         }
+        tcs.TrySetException(new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds"));
       }
-    }
-    finally
-    {
-      OnMessageReceived -= OnResponseReceived;
-      responseReceived.Dispose();
-    }
+    });
+
+    // キューに追加
+    await _sendQueueWriter.WriteAsync(request, cancellationToken);
+
+    // 応答を待つ
+    return await tcs.Task;
   }
 
   private void StartKeepAlive()
@@ -688,20 +850,6 @@ public class TcpClient : ITcpClient
       return;
     }
 
-    // フィルターパイプラインを適用
-    var filteredMessage = keepAliveMessage;
-    foreach (var filter in _filters)
-    {
-      var ctx = new MessageContext(null, false);
-      filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
-    }
-
-    // メッセージログ出力（設定が有効な場合）
-    if (_config.EnableMessageLogging)
-    {
-      _logger?.LogDebug("TCP Client '{Name}' sending keep-alive message: {MessageText}", Name, filteredMessage.Text?.Trim());
-    }
-
     // キープアライブ応答用のTaskCompletionSourceを作成
     var tcs = new TaskCompletionSource<Message>();
     var previousTcs = Interlocked.Exchange(ref _keepAliveResponseTcs, tcs);
@@ -714,10 +862,6 @@ public class TcpClient : ITcpClient
 
     try
     {
-      // MessageTerminatorを自動的に追加して送信
-      var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
-      await _transport.SendAsync(dataToSend, _cancellationTokenSource.Token);
-      
       // キープアライブ送信時刻を更新
       lock (_statsLock)
       {
@@ -733,6 +877,17 @@ public class TcpClient : ITcpClient
           tcs.TrySetCanceled();
         }
       });
+
+      // 送信キューに追加（応答待ちはしない）
+      var request = new SendRequest
+      {
+        Message = keepAliveMessage,
+        ResponseTcs = null, // キープアライブは専用のTCSを使用
+        EnqueuedAt = DateTime.UtcNow,
+        CancellationToken = _cancellationTokenSource.Token
+      };
+
+      await _sendQueueWriter.WriteAsync(request, _cancellationTokenSource.Token);
 
       // 応答を待つ（タイムアウトは無視して続行）
       try
@@ -990,6 +1145,12 @@ public class TcpClient : ITcpClient
           ? DateTime.UtcNow - _connectedAt.Value
           : (TimeSpan?)null;
 
+        int pendingRequestsCount;
+        lock (_pendingResponseRequestsLock)
+        {
+          pendingRequestsCount = _pendingResponseRequests.Count;
+        }
+
         return new ClientConnectionInfo
         {
           IsConnected = IsConnected,
@@ -1001,7 +1162,7 @@ public class TcpClient : ITcpClient
           ConnectionDuration = connectionDuration,
           MessagesSent = Interlocked.Read(ref _messagesSent),
           MessagesReceived = Interlocked.Read(ref _messagesReceived),
-          PendingRequests = _pendingRequests.Count,
+          PendingRequests = pendingRequestsCount,
           LastKeepAliveSentAt = _lastKeepAliveSentAt,
           LastKeepAliveResponseReceivedAt = _lastKeepAliveResponseReceivedAt,
           KeepAliveTimeoutCount = Interlocked.CompareExchange(ref _keepAliveTimeoutCount, 0, 0),
@@ -1030,6 +1191,16 @@ public class TcpClient : ITcpClient
     _messageReceivedSubject.Dispose();
     StopKeepAlive();
     _disposed = true;
+  }
+
+  private class SendRequest
+  {
+    public Message Message { get; set; } = null!;
+    public TaskCompletionSource<Message>? ResponseTcs { get; set; } // nullの場合は応答不要
+    public Func<Message, bool>? ResponsePredicate { get; set; }
+    public TimeSpan Timeout { get; set; }
+    public DateTime EnqueuedAt { get; set; }
+    public CancellationToken CancellationToken { get; set; }
   }
 
   private class MessageContext : IMessageContext
