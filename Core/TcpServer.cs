@@ -368,9 +368,12 @@ public class TcpServer : ITcpServer
       _filters = filters;
 
       var encoding = GetEncoding(config.Encoding);
+      // 受信時の終端文字を決定：ReceiveMessageTerminatorが設定されている場合はそれを使用、未設定の場合はMessageTerminatorを使用
+      string[]? receiveTerminators = config.ReceiveMessageTerminator ?? 
+          (config.MessageTerminator != null ? new[] { config.MessageTerminator } : null);
       _parser = new MessageParser(
           encoding,
-          config.MessageTerminator,
+          receiveTerminators,
           config.FixedHeaderLength,
           config.FixedBodyLength,
           config.LengthFieldOffset,

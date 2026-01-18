@@ -42,6 +42,11 @@ public class ServerConfig
   public string? MessageTerminator { get; set; }
 
   /// <summary>
+  /// 受信時のメッセージ終端文字の配列（複数の候補をサポート）。未設定の場合はMessageTerminatorを使用
+  /// </summary>
+  public string[]? ReceiveMessageTerminator { get; set; }
+
+  /// <summary>
   /// クライアント識別方式
   /// </summary>
   public ClientIdentification ClientIdentification { get; set; } = ClientIdentification.SourceEndpoint;

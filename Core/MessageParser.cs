@@ -10,7 +10,7 @@ namespace Dnbn.Core;
 public class MessageParser
 {
   private readonly Encoding _encoding;
-  private readonly string? _messageTerminator;
+  private readonly string[]? _messageTerminators;
   private readonly int? _fixedHeaderLength;
   private readonly int? _fixedBodyLength;
   private readonly int? _lengthFieldOffset;
@@ -22,21 +22,21 @@ public class MessageParser
   /// コンストラクタ
   /// </summary>
   /// <param name="encoding">文字エンコーディング</param>
-  /// <param name="messageTerminator">メッセージ終端文字（オプション）</param>
+  /// <param name="messageTerminators">メッセージ終端文字の配列（オプション、複数の候補をサポート）</param>
   /// <param name="fixedHeaderLength">固定長ヘッダーの長さ（オプション）</param>
   /// <param name="fixedBodyLength">固定長ボディの長さ（オプション）</param>
   /// <param name="lengthFieldOffset">長さフィールドのオフセット（オプション）</param>
   /// <param name="lengthFieldLength">長さフィールドの長さ（オプション）</param>
   public MessageParser(
       Encoding encoding,
-      string? messageTerminator = null,
+      string[]? messageTerminators = null,
       int? fixedHeaderLength = null,
       int? fixedBodyLength = null,
       int? lengthFieldOffset = null,
       int? lengthFieldLength = null)
   {
     _encoding = encoding;
-    _messageTerminator = messageTerminator;
+    _messageTerminators = messageTerminators;
     _fixedHeaderLength = fixedHeaderLength;
     _fixedBodyLength = fixedBodyLength;
     _lengthFieldOffset = lengthFieldOffset;
@@ -74,15 +74,33 @@ public class MessageParser
 
     byte[]? messageData = null;
 
-    // 終端文字方式
-    if (!string.IsNullOrEmpty(_messageTerminator))
+    // 終端文字方式（複数の終端文字候補をサポート）
+    if (_messageTerminators != null && _messageTerminators.Length > 0)
     {
-      var terminatorBytes = _encoding.GetBytes(_messageTerminator);
-      var terminatorIndex = FindSequence(_buffer, terminatorBytes);
+      int earliestIndex = int.MaxValue;
+      byte[]? matchedTerminatorBytes = null;
 
-      if (terminatorIndex >= 0)
+      // すべての終端文字候補をチェックし、最も早く見つかったものを使用
+      foreach (var terminator in _messageTerminators)
       {
-        var messageLength = terminatorIndex + terminatorBytes.Length;
+        if (string.IsNullOrEmpty(terminator))
+        {
+          continue;
+        }
+
+        var terminatorBytes = _encoding.GetBytes(terminator);
+        var terminatorIndex = FindSequence(_buffer, terminatorBytes);
+
+        if (terminatorIndex >= 0 && terminatorIndex < earliestIndex)
+        {
+          earliestIndex = terminatorIndex;
+          matchedTerminatorBytes = terminatorBytes;
+        }
+      }
+
+      if (matchedTerminatorBytes != null && earliestIndex < int.MaxValue)
+      {
+        var messageLength = earliestIndex + matchedTerminatorBytes.Length;
         messageData = _buffer.Take(messageLength).ToArray();
         _buffer.RemoveRange(0, messageLength);
       }

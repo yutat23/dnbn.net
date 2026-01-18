@@ -213,7 +213,8 @@ Console.WriteLine($"Response: {response.Text}");
 | `Name` | `string` | ✓ | `""` | サーバー名（設定識別用）。`CreateServer()`で使用します |
 | `ListenPort` | `int` | ✓ | - | リッスンポート番号 |
 | `Encoding` | `string` | - | `"UTF-8"` | 文字エンコーディング（`"UTF-8"`, `"Shift-JIS"`など） |
-| `MessageTerminator` | `string?` | - | `null` | メッセージ終端文字（`"\r"`, `"\r\n"`, `"\n"`など）。終端文字方式を使用する場合に設定 |
+| `MessageTerminator` | `string?` | - | `null` | メッセージ終端文字（`"\r"`, `"\r\n"`, `"\n"`など）。送信時に使用されます。終端文字方式を使用する場合に設定 |
+| `ReceiveMessageTerminator` | `string[]?` | - | `null` | 受信時のメッセージ終端文字の配列（複数の候補をサポート）。未設定の場合は`MessageTerminator`を使用。例：`["#", "?"]`（正常応答「#」、異常応答「?」） |
 | `ClientIdentification` | `ClientIdentification` | - | `SourceEndpoint` | クライアント識別方式。`SourceEndpoint`（送信元エンドポイント）または`HeaderBased`（ヘッダベース） |
 | `FixedHeaderLength` | `int?` | - | `null` | 固定長ヘッダサイズ（バイト）。固定長/可変長プロトコルで使用 |
 | `FixedBodyLength` | `int?` | - | `null` | 固定長ボディサイズ（バイト）。固定長プロトコルで使用 |
@@ -229,6 +230,7 @@ Console.WriteLine($"Response: {response.Text}");
   "ListenPort": 5000,
   "Encoding": "UTF-8",
   "MessageTerminator": "\r\n",
+  "ReceiveMessageTerminator": ["\r"],
   "ClientIdentification": "SourceEndpoint",
   "EnableMessageLogging": true
 }
@@ -244,7 +246,8 @@ Console.WriteLine($"Response: {response.Text}");
 | `RemoteHost` | `string` | ✓ | `""` | リモートホスト（IPアドレスまたはホスト名） |
 | `RemotePort` | `int` | ✓ | - | リモートポート番号 |
 | `Encoding` | `string` | - | `"UTF-8"` | 文字エンコーディング（`"UTF-8"`, `"Shift-JIS"`など） |
-| `MessageTerminator` | `string?` | - | `null` | メッセージ終端文字（`"\r"`, `"\r\n"`, `"\n"`など）。終端文字方式を使用する場合に設定 |
+| `MessageTerminator` | `string?` | - | `null` | メッセージ終端文字（`"\r"`, `"\r\n"`, `"\n"`など）。送信時に使用されます。終端文字方式を使用する場合に設定 |
+| `ReceiveMessageTerminator` | `string[]?` | - | `null` | 受信時のメッセージ終端文字の配列（複数の候補をサポート）。未設定の場合は`MessageTerminator`を使用。例：`["#", "?"]`（正常応答「#」、異常応答「?」） |
 | `TimeoutMilliseconds` | `int` | - | `5000` | タイムアウト（ミリ秒）。メッセージ送信時のデフォルトタイムアウト |
 | `RetryPolicy` | `RetryPolicy?` | - | `null` | リトライポリシー（メッセージ送信用）。詳細は[リトライポリシー](#リトライポリシー-retrypolicy)を参照 |
 | `ConnectionRetryPolicy` | `RetryPolicy?` | - | `null` | 接続リトライポリシー（接続失敗時およびNW障害時の自動再接続用）。詳細は[リトライポリシー](#リトライポリシー-retrypolicy)を参照 |
@@ -264,6 +267,7 @@ Console.WriteLine($"Response: {response.Text}");
   "RemotePort": 7000,
   "Encoding": "UTF-8",
   "MessageTerminator": "\r",
+  "ReceiveMessageTerminator": ["\r\n"],
   "TimeoutMilliseconds": 5000,
   "EnableMessageLogging": true,
   "RetryPolicy": {
@@ -385,8 +389,12 @@ Console.WriteLine($"Response: {response.Text}");
 - 設定が簡単
 - テキストプロトコルに最適
 - バイナリデータには不向き（終端文字がデータに含まれる可能性がある）
+- 送信時と受信時で異なる終端文字を指定可能
+- 受信時に複数の終端文字候補を指定可能
 
 **使用例**:
+
+**基本的な使用例**:
 
 ```json
 {
@@ -394,6 +402,31 @@ Console.WriteLine($"Response: {response.Text}");
   "ListenPort": 5000,
   "Encoding": "UTF-8",
   "MessageTerminator": "\r\n"
+}
+```
+
+**送信時と受信時で異なる終端文字を使用する例**:
+
+```json
+{
+  "Name": "TextServer",
+  "ListenPort": 5000,
+  "Encoding": "UTF-8",
+  "MessageTerminator": "\r\n",  // 送信用
+  "ReceiveMessageTerminator": ["\r"]  // 受信用
+}
+```
+
+**複数の終端文字候補を指定する例**（正常応答「#」、異常応答「?」など）:
+
+```json
+{
+  "Name": "DeviceController",
+  "RemoteHost": "192.168.1.10",
+  "RemotePort": 7000,
+  "Encoding": "UTF-8",
+  "MessageTerminator": "\r",  // 送信用
+  "ReceiveMessageTerminator": ["#", "?"]  // 受信用：正常応答「#」、異常応答「?」
 }
 ```
 
