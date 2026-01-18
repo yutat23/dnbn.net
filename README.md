@@ -1,8 +1,10 @@
 # dnbn.net - TCP独自電文ライブラリ
+![image](https://img.shields.io/badge/language-C%23-green?logo)
+![image](https://img.shields.io/badge/dotnet-10.0-blue?logo=dotnet)
+[![NuGet version (Dnbn.net)](https://img.shields.io/nuget/v/dnbn.net?link=https%3A%2F%2Fwww.nuget.org%2Fpackages%2Fdnbn.net
+)](https://www.nuget.org/packages/dnbn.net/)
 
-.NET 8+ 対応の柔軟なTCP電文ライブラリです。
-
-**リポジトリ**: https://github.com/yutat23/dnbn.net
+.NET 10+ 対応のTCPメッセージ送受信ライブラリです。
 
 ## 目次
 
