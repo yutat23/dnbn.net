@@ -217,6 +217,7 @@ Console.WriteLine($"Response: {response.Text}");
 | `FixedBodyLength` | `int?` | - | `null` | 固定長ボディサイズ（バイト）。固定長プロトコルで使用 |
 | `LengthFieldOffset` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドの位置（バイト）。可変長プロトコルで使用 |
 | `LengthFieldLength` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドのサイズ（バイト）。1, 2, 4バイトをサポート |
+| `EnableMessageLogging` | `bool` | - | `false` | メッセージ送受信時のログ出力を有効にするかどうか。`true`に設定すると、DEBUGレベルでメッセージの送受信がログ出力されます |
 
 **設定例**:
 
@@ -226,7 +227,8 @@ Console.WriteLine($"Response: {response.Text}");
   "ListenPort": 5000,
   "Encoding": "UTF-8",
   "MessageTerminator": "\r\n",
-  "ClientIdentification": "SourceEndpoint"
+  "ClientIdentification": "SourceEndpoint",
+  "EnableMessageLogging": true
 }
 ```
 
@@ -249,6 +251,7 @@ Console.WriteLine($"Response: {response.Text}");
 | `FixedBodyLength` | `int?` | - | `null` | 固定長ボディサイズ（バイト）。固定長プロトコルで使用 |
 | `LengthFieldOffset` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドの位置（バイト）。可変長プロトコルで使用 |
 | `LengthFieldLength` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドのサイズ（バイト）。1, 2, 4バイトをサポート |
+| `EnableMessageLogging` | `bool` | - | `false` | メッセージ送受信時のログ出力を有効にするかどうか。`true`に設定すると、DEBUGレベルでメッセージの送受信がログ出力されます |
 
 **設定例**:
 
@@ -260,6 +263,7 @@ Console.WriteLine($"Response: {response.Text}");
   "Encoding": "UTF-8",
   "MessageTerminator": "\r",
   "TimeoutMilliseconds": 5000,
+  "EnableMessageLogging": true,
   "RetryPolicy": {
     "MaxRetryCount": 3,
     "RetryDelayStrategy": "Exponential",
@@ -1394,11 +1398,52 @@ services.AddSingleton<ILoggerFactory, Log4netLoggerFactoryAdapter>();
 services.AddTcpMessenger(configuration);
 ```
 
+### メッセージ送受信ログ
+
+`EnableMessageLogging`設定を`true`にすることで、メッセージの送受信時にDEBUGレベルのログを出力できます。
+
+**設定方法**:
+
+```json
+{
+  "TcpMessenger": {
+    "Servers": [
+      {
+        "Name": "MainServer",
+        "ListenPort": 5000,
+        "EnableMessageLogging": true
+      }
+    ],
+    "Clients": [
+      {
+        "Name": "ControllerA",
+        "RemoteHost": "192.168.1.10",
+        "RemotePort": 7000,
+        "EnableMessageLogging": true
+      }
+    ]
+  }
+}
+```
+
+**ログ出力例**:
+
+- クライアント送信: `TCP Client 'ControllerA' sending message: HELLO`
+- クライアント受信: `TCP Client 'ControllerA' received message: OK`
+- サーバー送信: `TCP Server 'MainServer' sending message to session 127.0.0.1:12345-abc123: ECHO: HELLO`
+- サーバー受信: `TCP Server 'MainServer' received message from session 127.0.0.1:12345-abc123: HELLO`
+
+**注意事項**:
+
+- ログレベルをDEBUGに設定する必要があります（Microsoft.Extensions.Loggingまたはlog4netの設定で）
+- フィルターパイプラインによるログ出力とは独立して動作します
+- デフォルト値は`false`のため、明示的に`true`に設定しない限りログは出力されません
+
 ### ログレベル
 
 ライブラリは以下のログレベルを使用します：
 
-- **DEBUG**: 電文受信（メッセージの詳細）
+- **DEBUG**: メッセージ送受信（`EnableMessageLogging`が`true`の場合）、電文受信（メッセージの詳細）
 - **INFO**: 接続（CONNECT）、サーバー起動/停止、意図的な切断
 - **WARN**: キープアライブタイムアウトなど警告
 - **ERROR**: 意図しない切断（NW障害など）、受信エラー、接続エラー

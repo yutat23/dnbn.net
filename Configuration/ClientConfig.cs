@@ -69,6 +69,11 @@ public class ClientConfig
   /// 可変長ボディの場合のヘッダ内長さフィールドのサイズ（バイト）
   /// </summary>
   public int? LengthFieldLength { get; set; }
+
+  /// <summary>
+  /// メッセージ送受信時のログ出力を有効にするかどうか
+  /// </summary>
+  public bool EnableMessageLogging { get; set; } = false;
 }
 
 

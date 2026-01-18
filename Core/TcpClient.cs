@@ -249,6 +249,12 @@ public class TcpClient : ITcpClient
             filteredMessage = await filter.OnReceivedAsync(filteredMessage, ctx);
           }
 
+          // メッセージログ出力（設定が有効な場合）
+          if (_config.EnableMessageLogging)
+          {
+            _logger?.LogDebug("TCP Client '{Name}' received message: {MessageText}", Name, filteredMessage.Text?.Trim());
+          }
+
           // 統計情報を更新
           Interlocked.Increment(ref _messagesReceived);
           lock (_statsLock)
@@ -461,6 +467,12 @@ public class TcpClient : ITcpClient
       filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
     }
 
+    // メッセージログ出力（設定が有効な場合）
+    if (_config.EnableMessageLogging)
+    {
+      _logger?.LogDebug("TCP Client '{Name}' sending message: {MessageText}", Name, filteredMessage.Text?.Trim());
+    }
+
     // MessageTerminatorを自動的に追加
     var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
     await _transport.SendAsync(dataToSend);
@@ -640,6 +652,12 @@ public class TcpClient : ITcpClient
     {
       var ctx = new MessageContext(null, false);
       filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
+    }
+
+    // メッセージログ出力（設定が有効な場合）
+    if (_config.EnableMessageLogging)
+    {
+      _logger?.LogDebug("TCP Client '{Name}' sending keep-alive message: {MessageText}", Name, filteredMessage.Text?.Trim());
     }
 
     // キープアライブ応答用のTaskCompletionSourceを作成

@@ -402,6 +402,12 @@ public class TcpServer : ITcpServer
               filteredMessage = await filter.OnReceivedAsync(filteredMessage, ctx);
             }
 
+            // メッセージログ出力（設定が有効な場合）
+            if (_config.EnableMessageLogging)
+            {
+              _logger?.LogDebug("TCP Server '{Name}' received message from session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
+            }
+
             OnMessageReceived?.Invoke(filteredMessage);
           }
         }
@@ -435,6 +441,12 @@ public class TcpServer : ITcpServer
       {
         var ctx = new MessageContext(_sessionInfo, true);
         filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
+      }
+
+      // メッセージログ出力（設定が有効な場合）
+      if (_config.EnableMessageLogging)
+      {
+        _logger?.LogDebug("TCP Server '{Name}' sending message to session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
       }
 
       // MessageTerminatorを自動的に追加

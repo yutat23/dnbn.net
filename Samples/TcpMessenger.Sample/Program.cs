@@ -163,6 +163,8 @@ class Program
   static async Task RunClientMode(ITcpMessengerFactory factory, ILog _log)
   {
     Console.WriteLine("\n=== クライアントモード ===");
+    Console.WriteLine("メッセージ送受信ログが有効になっています（appsettings.jsonのEnableMessageLogging: true）");
+    Console.WriteLine("DEBUGレベルのログでメッセージの送受信が出力されます。\n");
     var client = factory.CreateClient("EchoClient");
 
     // イベントハンドラを設定
@@ -247,6 +249,8 @@ class Program
   static async Task RunIntegratedMode(ITcpMessengerFactory factory, ILog _log)
   {
     Console.WriteLine("\n=== 統合モード（サーバー + クライアント） ===");
+    Console.WriteLine("メッセージ送受信ログが有効になっています（appsettings.jsonのEnableMessageLogging: true）");
+    Console.WriteLine("DEBUGレベルのログでメッセージの送受信が出力されます。\n");
 
     // サーバーを起動
     var server = factory.CreateServer("EchoServer");
