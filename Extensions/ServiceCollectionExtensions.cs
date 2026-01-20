@@ -20,8 +20,25 @@ public static class ServiceCollectionExtensions
       this IServiceCollection services,
       IConfiguration configuration)
   {
-    // 設定を登録
-    services.Configure<TcpMessengerConfig>(configuration.GetSection("TcpMessenger").Bind);
+    // 設定を登録（dnbn.net を優先、TcpMessenger をフォールバック）
+    var dnbnSection = configuration.GetSection("dnbn.net");
+    var tcpMessengerSection = configuration.GetSection("TcpMessenger");
+
+    IConfigurationSection configSection;
+    if (dnbnSection.Exists())
+    {
+      configSection = dnbnSection;
+    }
+    else if (tcpMessengerSection.Exists())
+    {
+      configSection = tcpMessengerSection;
+    }
+    else
+    {
+      throw new InvalidOperationException("設定セクション 'dnbn.net' または 'TcpMessenger' が見つかりません。appsettings.json に設定を追加してください。");
+    }
+
+    services.Configure<TcpMessengerConfig>(configSection.Bind);
 
     // ファクトリーを登録
     services.AddSingleton<ITcpMessengerFactory, TcpMessengerFactory>();

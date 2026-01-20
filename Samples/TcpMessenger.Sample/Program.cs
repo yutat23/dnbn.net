@@ -58,8 +58,11 @@ class Program
     var serviceProvider = services.BuildServiceProvider();
     var factory = serviceProvider.GetRequiredService<ITcpMessengerFactory>();
 
-    // TCP Messenger設定を取得
-    var tcpMessengerConfig = configuration.GetSection("TcpMessenger").Get<TcpMessengerConfig>();
+    // TCP Messenger設定を取得（dnbn.net を優先、TcpMessenger をフォールバック）
+    var dnbnSection = configuration.GetSection("dnbn.net");
+    var tcpMessengerSection = configuration.GetSection("TcpMessenger");
+    var configSection = dnbnSection.Exists() ? dnbnSection : tcpMessengerSection;
+    var tcpMessengerConfig = configSection.Get<TcpMessengerConfig>();
 
     // Web UIをモード選択前に起動
     Dnbn.WebUI.WebUIService? globalWebUIService = null;

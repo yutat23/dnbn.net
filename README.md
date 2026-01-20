@@ -74,7 +74,7 @@ dotnet add package dnbn.net
 
 ```json
 {
-  "TcpMessenger": {
+  "dnbn.net": {
     "Servers": [
       {
         "Name": "MainServer",
@@ -114,6 +114,8 @@ dotnet add package dnbn.net
   }
 }
 ```
+
+**注**: 設定キー名として `"dnbn.net"` を推奨します。後方互換性のため、`"TcpMessenger"` も引き続きサポートされています。両方のキーが存在する場合、`"dnbn.net"` が優先されます。
 
 ### 2. サービスを登録
 
@@ -209,7 +211,7 @@ Console.WriteLine($"Response: {response.Text}");
 
 ### サーバー設定 (ServerConfig)
 
-サーバー側の設定項目です。`TcpMessenger.Servers`配列に設定します。
+サーバー側の設定項目です。`dnbn.net.Servers`配列に設定します（`TcpMessenger.Servers`も引き続きサポートされています）。
 
 | プロパティ | 型 | 必須 | デフォルト値 | 説明 |
 |-----------|-----|------|------------|------|
@@ -241,7 +243,7 @@ Console.WriteLine($"Response: {response.Text}");
 
 ### クライアント設定 (ClientConfig)
 
-クライアント側の設定項目です。`TcpMessenger.Clients`配列に設定します。
+クライアント側の設定項目です。`dnbn.net.Clients`配列に設定します（`TcpMessenger.Clients`も引き続きサポートされています）。
 
 | プロパティ | 型 | 必須 | デフォルト値 | 説明 |
 |-----------|-----|------|------------|------|
@@ -373,7 +375,7 @@ Console.WriteLine($"Response: {response.Text}");
 
 ### Web UI設定 (WebUIConfig)
 
-TCP Messengerの状態をWebブラウザで表示するための設定です。`TcpMessenger.WebUI`に設定します。
+TCP Messengerの状態をWebブラウザで表示するための設定です。`dnbn.net.WebUI`に設定します（`TcpMessenger.WebUI`も引き続きサポートされています）。
 
 | プロパティ | 型 | 必須 | デフォルト値 | 説明 |
 |-----------|-----|------|------------|------|
@@ -387,7 +389,7 @@ TCP Messengerの状態をWebブラウザで表示するための設定です。`
 
 ```json
 {
-  "TcpMessenger": {
+  "dnbn.net": {
     "WebUI": {
       "Enabled": true,
       "Port": 8080,
@@ -398,6 +400,8 @@ TCP Messengerの状態をWebブラウザで表示するための設定です。`
   }
 }
 ```
+
+**注**: `"TcpMessenger"` キーも引き続きサポートされています。
 
 **動作**:
 
@@ -1406,7 +1410,7 @@ TCP Messengerの状態をWebブラウザでリアルタイムに表示する機�
 
 ```json
 {
-  "TcpMessenger": {
+  "dnbn.net": {
     "WebUI": {
       "Enabled": true,
       "Port": 8080,
@@ -1417,6 +1421,8 @@ TCP Messengerの状態をWebブラウザでリアルタイムに表示する機�
   }
 }
 ```
+
+**注**: `"TcpMessenger"` キーも引き続きサポートされています。
 
 **サーバー単体でWeb UIを起動**:
 
@@ -1611,7 +1617,7 @@ services.AddTcpMessenger(configuration);
 
 ```json
 {
-  "TcpMessenger": {
+  "dnbn.net": {
     "Servers": [
       {
         "Name": "MainServer",
