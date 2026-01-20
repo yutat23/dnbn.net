@@ -14,6 +14,11 @@ public class TcpMessengerConfig
   /// クライアント設定リスト
   /// </summary>
   public List<ClientConfig> Clients { get; set; } = new();
+
+  /// <summary>
+  /// Web UI設定
+  /// </summary>
+  public WebUIConfig? WebUI { get; set; }
 }
 
 

@@ -22,6 +22,7 @@ public class TcpServer : ITcpServer
   private readonly ConcurrentDictionary<string, ServerSession> _sessions = new();
   private readonly Subject<(Message message, SessionInfo sessionInfo)> _messageReceivedSubject = new();
   private readonly CancellationTokenSource _cancellationTokenSource = new();
+  private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
 
   // 統計情報追跡用フィールド
@@ -94,8 +95,18 @@ public class TcpServer : ITcpServer
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    // 外部CancellationTokenと内部CancellationTokenSourceを統合
-    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
+    // 既存の登録を破棄
+    _externalCancellationTokenRegistration?.Dispose();
+
+    // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
+    _externalCancellationTokenRegistration = cancellationToken.Register(() =>
+    {
+      if (!_cancellationTokenSource.IsCancellationRequested)
+      {
+        _cancellationTokenSource.Cancel();
+        _listener?.Stop();
+      }
+    });
 
     _listener = new TcpListener(IPAddress.Any, _config.ListenPort);
     _listener.Start();
@@ -105,7 +116,7 @@ public class TcpServer : ITcpServer
     }
     _logger?.LogInformation("TCP Server '{Name}' started on port {Port}", Name, _config.ListenPort);
 
-    _ = Task.Run(AcceptClientsAsync, linkedCts.Token);
+    _ = Task.Run(AcceptClientsAsync, _cancellationTokenSource.Token);
   }
 
   /// <summary>
@@ -120,6 +131,10 @@ public class TcpServer : ITcpServer
     }
 
     cancellationToken.ThrowIfCancellationRequested();
+
+    // 外部CancellationTokenの登録を破棄
+    _externalCancellationTokenRegistration?.Dispose();
+    _externalCancellationTokenRegistration = null;
 
     _cancellationTokenSource.Cancel();
     _listener?.Stop();
@@ -147,8 +162,14 @@ public class TcpServer : ITcpServer
     {
       try
       {
-        var tcpClient = await _listener.AcceptTcpClientAsync();
+        // AcceptTcpClientAsyncをキャンセル可能にする
+        var tcpClient = await _listener.AcceptTcpClientAsync(_cancellationTokenSource.Token);
         _ = Task.Run(() => HandleClientAsync(tcpClient), _cancellationTokenSource.Token);
+      }
+      catch (OperationCanceledException)
+      {
+        // キャンセルされた場合は正常終了
+        break;
       }
       catch (ObjectDisposedException)
       {
@@ -156,8 +177,11 @@ public class TcpServer : ITcpServer
       }
       catch (Exception ex)
       {
-        _logger?.LogError(ex, "Error accepting client");
-        OnError?.Invoke(this, (ex, null));
+        if (!_cancellationTokenSource.Token.IsCancellationRequested)
+        {
+          _logger?.LogError(ex, "Error accepting client");
+          OnError?.Invoke(this, (ex, null));
+        }
       }
     }
   }
@@ -328,6 +352,7 @@ public class TcpServer : ITcpServer
     }
 
     StopAsync().GetAwaiter().GetResult();
+    _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     _disposed = true;

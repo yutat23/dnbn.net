@@ -1,0 +1,11 @@
+{
+  "name": "dnbn.net",
+  "version": "1.0.0",
+  "description": "TCP Messenger Library",
+  "scripts": {
+    "build:css": "tailwindcss -i WebUI/css/input.css -o WebUI/wwwroot/css/output.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^4.1.11"
+  }
+}

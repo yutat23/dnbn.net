@@ -29,6 +29,7 @@ public class TcpClient : ITcpClient
   private readonly object _pendingResponseRequestsLock = new();
   private System.Timers.Timer? _keepAliveTimer;
   private CancellationTokenSource _cancellationTokenSource = new();
+  private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
   private TaskCompletionSource<Message>? _keepAliveResponseTcs;
   private bool _isIntentionalDisconnect = false;
@@ -145,6 +146,18 @@ public class TcpClient : ITcpClient
 
     cancellationToken.ThrowIfCancellationRequested();
 
+    // 既存の登録を破棄
+    _externalCancellationTokenRegistration?.Dispose();
+
+    // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
+    _externalCancellationTokenRegistration = cancellationToken.Register(() =>
+    {
+      if (!_cancellationTokenSource.IsCancellationRequested)
+      {
+        _cancellationTokenSource.Cancel();
+      }
+    });
+
     // 外部CancellationTokenと内部CancellationTokenSourceを統合
     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
 
@@ -222,6 +235,10 @@ public class TcpClient : ITcpClient
     cancellationToken.ThrowIfCancellationRequested();
 
     _isIntentionalDisconnect = isIntentional;
+
+    // 外部CancellationTokenの登録を破棄
+    _externalCancellationTokenRegistration?.Dispose();
+    _externalCancellationTokenRegistration = null;
 
     // CancellationTokenSourceを先にキャンセル（これによりキープアライブタイマーのElapsedイベント内のチェックが機能する）
     _cancellationTokenSource.Cancel();
@@ -779,7 +796,23 @@ public class TcpClient : ITcpClient
     await _sendQueueWriter.WriteAsync(request, cancellationToken);
 
     // 応答を待つ
-    return await tcs.Task;
+    try
+    {
+      return await tcs.Task;
+    }
+    catch (TimeoutException ex)
+    {
+      // タイムアウトエラーを統計に記録
+      Interlocked.Increment(ref _errorCount);
+      lock (_statsLock)
+      {
+        _lastError = ex.Message;
+        _lastErrorAt = DateTime.UtcNow;
+      }
+      _logger?.LogWarning("Request timeout for client {Name}: {Message}", Name, ex.Message);
+      OnError?.Invoke(this, ex);
+      throw;
+    }
   }
 
   private void StartKeepAlive()
@@ -1190,6 +1223,7 @@ public class TcpClient : ITcpClient
     }
 
     DisconnectAsync().GetAwaiter().GetResult();
+    _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     StopKeepAlive();

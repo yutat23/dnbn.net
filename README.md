@@ -16,6 +16,7 @@
   - [クライアント設定 (ClientConfig)](#クライアント設定-clientconfig)
   - [リトライポリシー (RetryPolicy)](#リトライポリシー-retrypolicy)
   - [キープアライブ設定 (KeepAliveConfig)](#キープアライブ設定-keepaliveconfig)
+  - [Web UI設定 (WebUIConfig)](#web-ui設定-webuiconfig)
 - [メッセージプロトコル](#メッセージプロトコル)
   - [終端文字方式](#終端文字方式)
   - [固定長プロトコル](#固定長プロトコル)
@@ -37,6 +38,7 @@
   - [動的設定変更機能](#動的設定変更機能)
   - [セッション管理](#セッション管理)
   - [エラーハンドリング](#エラーハンドリング)
+- [Web UI機能](#web-ui機能)
 - [ログ機能](#ログ機能)
   - [log4netとの統合](#log4netとの統合)
   - [ログレベル](#ログレベル)
@@ -56,6 +58,7 @@
 - 動的設定変更機能（実行時にKeepAlive、タイムアウト、リトライポリシーなどを変更可能）
 - 複数クライアントを同一ポートで受信可能
 - appsettings.json統合設定
+- Web UI機能（TCP Messengerの状態をWebブラウザでリアルタイム表示、SSEによる自動更新）
 
 ## インストール
 
@@ -367,6 +370,41 @@ Console.WriteLine($"Response: {response.Text}");
 - キープアライブが有効な場合、指定された間隔で自動的にメッセージを送信します
 - キープアライブメッセージの応答は`OnKeepAliveResponseReceived`イベントで受け取れます
 - 応答がタイムアウトした場合、WARNレベルのログが出力されます
+
+### Web UI設定 (WebUIConfig)
+
+TCP Messengerの状態をWebブラウザで表示するための設定です。`TcpMessenger.WebUI`に設定します。
+
+| プロパティ | 型 | 必須 | デフォルト値 | 説明 |
+|-----------|-----|------|------------|------|
+| `Enabled` | `bool` | - | `false` | Web UIを有効にするか |
+| `Port` | `int` | - | `8080` | Web UIのポート番号 |
+| `UpdateIntervalSeconds` | `int` | - | `1` | SSEストリームの送信間隔（秒） |
+| `BindAddress` | `string` | - | `"localhost"` | バインドアドレス（`"*"`で全アドレス） |
+| `EnableLogging` | `bool` | - | `true` | Web UI関連のログ出力の有効化/無効化 |
+
+**設定例**:
+
+```json
+{
+  "TcpMessenger": {
+    "WebUI": {
+      "Enabled": true,
+      "Port": 8080,
+      "UpdateIntervalSeconds": 1,
+      "BindAddress": "localhost",
+      "EnableLogging": true
+    }
+  }
+}
+```
+
+**動作**:
+
+- Web UIが有効な場合、指定されたポートでHTTPサーバーが起動します
+- ブラウザで `http://localhost:8080` にアクセスすると、TCP Messengerの状態が表示されます
+- SSE（Server-Sent Events）により、接続状態やメッセージ送受信数などがリアルタイムで更新されます
+- REST APIエンドポイント（`/api/status`、`/api/status/client`、`/api/status/server`、`/api/health`）も利用可能です
 
 ## メッセージプロトコル
 
@@ -1358,6 +1396,138 @@ catch (Exception ex)
 }
 ```
 
+### Web UI機能
+
+TCP Messengerの状態をWebブラウザでリアルタイムに表示する機能です。
+
+#### 基本的な使用方法
+
+**appsettings.jsonに設定を追加**:
+
+```json
+{
+  "TcpMessenger": {
+    "WebUI": {
+      "Enabled": true,
+      "Port": 8080,
+      "UpdateIntervalSeconds": 1,
+      "BindAddress": "localhost",
+      "EnableLogging": true
+    }
+  }
+}
+```
+
+**サーバー単体でWeb UIを起動**:
+
+```csharp
+using Dnbn.Extensions;
+using Dnbn.Configuration;
+
+var factory = serviceProvider.GetRequiredService<ITcpMessengerFactory>();
+var tcpMessengerConfig = configuration.GetSection("TcpMessenger").Get<TcpMessengerConfig>();
+
+var server = factory.CreateServer("MainServer");
+await server.StartAsync();
+
+// Web UIを起動
+if (tcpMessengerConfig?.WebUI?.Enabled == true)
+{
+    var webUIService = await server.StartWebUIAsync(
+        tcpMessengerConfig.WebUI,
+        logger,
+        cancellationToken);
+    
+    Console.WriteLine($"Web UIが起動しました: http://localhost:{tcpMessengerConfig.WebUI.Port}");
+}
+```
+
+**クライアント単体でWeb UIを起動**:
+
+```csharp
+var client = factory.CreateClient("ControllerA");
+await client.ConnectAsync();
+
+// Web UIを起動
+if (tcpMessengerConfig?.WebUI?.Enabled == true)
+{
+    var webUIService = await client.StartWebUIAsync(
+        tcpMessengerConfig.WebUI,
+        logger,
+        cancellationToken);
+    
+    Console.WriteLine($"Web UIが起動しました: http://localhost:{tcpMessengerConfig.WebUI.Port}");
+}
+```
+
+**統合モード（複数のサーバーとクライアント）でWeb UIを起動**:
+
+```csharp
+var servers = new[] { server1, server2 };
+var clients = new[] { client1, client2 };
+
+// Web UIを起動（統合モード）
+if (tcpMessengerConfig?.WebUI?.Enabled == true)
+{
+    var webUIService = await servers.StartWebUIAsync(
+        clients,
+        tcpMessengerConfig.WebUI,
+        logger,
+        cancellationToken);
+    
+    Console.WriteLine($"Web UIが起動しました: http://localhost:{tcpMessengerConfig.WebUI.Port}");
+}
+```
+
+**手動でWebUIServiceを作成**:
+
+```csharp
+using Dnbn.WebUI;
+using Dnbn.Configuration;
+
+var webUIConfig = new WebUIConfig
+{
+    Enabled = true,
+    Port = 8080,
+    UpdateIntervalSeconds = 1,
+    BindAddress = "localhost",
+    EnableLogging = true
+};
+
+var webUIService = new WebUIService(
+    new[] { server1, server2 },  // サーバーリスト
+    new[] { client1, client2 },  // クライアントリスト
+    webUIConfig,
+    logger);
+
+await webUIService.StartAsync(cancellationToken);
+
+// アプリケーション終了時に停止
+await webUIService.StopAsync(cancellationToken);
+```
+
+#### Web UIの機能
+
+- **リアルタイム状態表示**: SSE（Server-Sent Events）により、接続状態やメッセージ送受信数などが自動更新されます
+- **クライアント状態**: 接続状態、接続継続時間、送受信メッセージ数、キープアライブ情報、エラー情報などを表示
+- **サーバー状態**: サーバーの稼働状態、接続数、セッション情報、送受信メッセージ数などを表示
+- **REST API**: 以下のエンドポイントが利用可能です
+  - `GET /api/status` - 全接続状態情報を取得
+  - `GET /api/status/client` - クライアント接続状態情報を取得
+  - `GET /api/status/server` - サーバー接続状態情報を取得
+  - `GET /api/health` - ヘルスチェック
+  - `GET /api/status/stream` - SSEストリーム（リアルタイム更新）
+
+#### ブラウザでのアクセス
+
+Web UIが有効な場合、ブラウザで以下のURLにアクセスできます：
+
+```
+http://localhost:8080
+```
+
+（設定で`Port`や`BindAddress`を変更した場合は、それに合わせてURLを変更してください）
+
 ## ログ機能
 
 ### log4netとの統合
@@ -1602,5 +1772,6 @@ dotnet run
 - **クライアントモード**: localhost:5000に接続し、メッセージを送信
 - **統合モード**: サーバーとクライアントを同時に起動し、Promise的チェーン処理の例を実行
 - **動的設定変更**: `config`コマンドで実行時に設定を変更（KeepAlive、タイムアウト、リトライポリシーなど）
+- **Web UI**: `appsettings.json`で`WebUI.Enabled`を`true`に設定すると、Web UIが自動的に起動します（デフォルト: `http://localhost:8080`）
 
 詳細は [Samples/TcpMessenger.Sample/README.md](./Samples/TcpMessenger.Sample/README.md) を参照してください。

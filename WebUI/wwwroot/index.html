@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TCP Status Dashboard</title>
+  <link rel="stylesheet" href="css/output.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+    
+    :root {
+      --digital-blue: #0066cc;
+      --digital-green: #00aa00;
+      --digital-red: #cc0000;
+      --digital-gray: #666666;
+      --digital-border: #cccccc;
+    }
+    
+    body {
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      background: #f0f0f0;
+      color: #333333;
+      position: relative;
+      overflow-x: hidden;
+    }
+    
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-size: 50px 50px;
+      pointer-events: none;
+      z-index: 0;
+    }
+    
+    .cyber-border {
+      border: 1px solid var(--digital-border);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    
+    .cyber-button {
+      background: #ffffff;
+      border: 1px solid var(--digital-blue);
+      color: var(--digital-blue);
+      transition: all 0.3s;
+    }
+    
+    .cyber-button:hover {
+      background: #f0f7ff;
+      border-color: var(--digital-blue);
+    }
+    
+    .cyber-table {
+      background: #ffffff;
+      border: 1px solid var(--digital-border);
+    }
+    
+    .cyber-table th {
+      background: #f5f5f5;
+      color: #333333;
+      border-bottom: 1px solid var(--digital-border);
+    }
+    
+    .cyber-table td {
+      border-bottom: 1px solid #eeeeee;
+      color: #333333;
+    }
+    
+    .cyber-table tr:hover {
+      background: #f9f9f9;
+    }
+    
+    .status-online {
+      color: var(--digital-green);
+    }
+    
+    .status-offline {
+      color: var(--digital-red);
+    }
+    
+    .cyber-modal {
+      background: #ffffff;
+      border: 2px solid var(--digital-border);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    .cyber-modal-header {
+      border-bottom: 1px solid var(--digital-border);
+      background: #f5f5f5;
+    }
+    
+    .pulse {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.7;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="min-h-screen relative z-10">
+    <!-- Header -->
+    <header class="cyber-border bg-white">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold">TCP Status Dashboard</h1>
+          <div class="flex items-center gap-4">
+            <button id="refreshBtn" class="cyber-button px-4 py-2 rounded-lg font-mono text-sm">
+              [REFRESH]
+            </button>
+            <div class="flex items-center gap-2">
+              <span id="autoUpdateStatus" class="text-sm font-medium status-online pulse">[AUTO-UPDATE: ON]</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Clients Section -->
+      <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-4 font-mono tracking-wider">[CLIENTS]</h2>
+        <div class="cyber-table rounded-lg overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="min-w-full">
+              <thead>
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">NAME</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">STATUS</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">REMOTE</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">UPTIME</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">SENT/RECV</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono" title="キープアライブタイムアウト回数（0=正常）">KEEPALIVE</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono" title="エラー発生回数（0=正常）">ERRORS</th>
+                </tr>
+              </thead>
+              <tbody id="clientsTableBody" class="font-mono text-sm">
+                <!-- 動的に生成 -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Servers Section -->
+      <section>
+        <h2 class="text-xl font-semibold mb-4 font-mono tracking-wider">[SERVERS]</h2>
+        <div class="cyber-table rounded-lg overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="min-w-full">
+              <thead>
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">NAME</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">STATUS</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">PORT</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">UPTIME</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">CONNECTIONS</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">TOTAL</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">SENT/RECV</th>
+                </tr>
+              </thead>
+              <tbody id="serversTableBody" class="font-mono text-sm">
+                <!-- 動的に生成 -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Client Detail Modal -->
+    <div id="clientModal" class="hidden fixed inset-0 bg-gray-500 bg-opacity-20 z-50 flex items-center justify-center p-4">
+      <div class="cyber-modal rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div class="sticky top-0 cyber-modal-header px-6 py-4 flex items-center justify-between">
+          <h3 id="clientModalTitle" class="text-xl font-semibold font-mono">[CLIENT DETAILS]</h3>
+          <button id="clientModalClose" class="text-gray-600 hover:text-gray-900 text-2xl font-mono transition-colors">[X]</button>
+        </div>
+        <div id="clientModalContent" class="p-6 font-mono text-sm">
+          <!-- 動的に生成 -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Server Detail Modal -->
+    <div id="serverModal" class="hidden fixed inset-0 bg-gray-500 bg-opacity-20 z-50 flex items-center justify-center p-4">
+      <div class="cyber-modal rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div class="sticky top-0 cyber-modal-header px-6 py-4 flex items-center justify-between">
+          <h3 id="serverModalTitle" class="text-xl font-semibold font-mono">[SERVER DETAILS]</h3>
+          <button id="serverModalClose" class="text-gray-600 hover:text-gray-900 text-2xl font-mono transition-colors">[X]</button>
+        </div>
+        <div id="serverModalContent" class="p-6 font-mono text-sm">
+          <!-- 動的に生成 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
