@@ -92,6 +92,34 @@ public interface ITcpClient : IDisposable
       CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// 文字列を送信する（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task SendAsync(string text, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// 文字列を送信して応答を待つ（簡易版：すべての応答を受け入れる、設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task<Message> SendAsync(string text, TimeSpan timeout, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// 文字列を送信して応答を待つ（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="responsePredicate">応答の条件（trueを返す応答を受け入れる）</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task<Message> SendAndWaitAsync(
+      string text,
+      Func<Message, bool> responsePredicate,
+      TimeSpan timeout,
+      CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// KeepAlive設定の取得・設定
   /// </summary>
   KeepAliveConfig? KeepAlive { get; set; }

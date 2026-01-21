@@ -181,9 +181,8 @@ class Program
       _log.Info($"受信 [{sessionInfo.SessionId}]: {message.Text?.Trim()}");
 
       // エコー応答を送信（CancellationTokenを使用）
-      var response = Message.FromString($"ECHO: {message.Text}", System.Text.Encoding.UTF8);
-      await server.SendAsync(sessionInfo.SessionId, response, cts.Token);
-      _log.Info($"送信 [{sessionInfo.SessionId}]: {response.Text?.Trim()}");
+      await server.SendAsync(sessionInfo.SessionId, $"ECHO: {message.Text}", cts.Token);
+      _log.Info($"送信 [{sessionInfo.SessionId}]: ECHO: {message.Text?.Trim()}");
     };
 
     server.OnError += (sender, args) =>
@@ -419,8 +418,7 @@ class Program
 
           try
           {
-            var message = Message.FromString($"{input}".Replace(@"\r", "\r"), System.Text.Encoding.UTF8);
-            var response = await client.SendAsync(message, TimeSpan.FromSeconds(5), cts.Token);
+            var response = await client.SendAsync($"{input}".Replace(@"\r", "\r"), TimeSpan.FromSeconds(5), cts.Token);
             _log.Info($"送信: {input}");
             _log.Info($"応答: {response.Text?.Trim()}");
           }
@@ -504,8 +502,7 @@ class Program
       _log.Info($"[Server] 受信: {message.Text?.Trim()}");
 
       // 応答を送信（CancellationTokenを使用）
-      var response = Message.FromString($"OK: {message.Text}", System.Text.Encoding.UTF8);
-      await server.SendAsync(sessionInfo.SessionId, response, cts.Token);
+      await server.SendAsync(sessionInfo.SessionId, $"OK: {message.Text}", cts.Token);
     };
 
     await server.StartAsync(cts.Token);
@@ -583,9 +580,8 @@ class Program
 
       foreach (var msgText in messages)
       {
-        var msg = Message.FromString($"{msgText}\r\n", System.Text.Encoding.UTF8);
         var sendStart = DateTime.UtcNow;
-        var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5), cts.Token);
+        var response = await client.SendAsync($"{msgText}\r\n", TimeSpan.FromSeconds(5), cts.Token);
         var sendEnd = DateTime.UtcNow;
 
         _log.Info($"[送信] {msgText} -> [応答] {response.Text?.Trim()} (所要時間: {(sendEnd - sendStart).TotalMilliseconds}ms)");
@@ -613,15 +609,12 @@ class Program
     Console.WriteLine("\n=== SendAsyncを使ったチェーン処理の例 ===");
     try
     {
-      var initMessage = Message.FromString("INIT\r\n", System.Text.Encoding.UTF8);
-
       // SendAsyncで送信して応答を待つ（CancellationTokenを使用）
-      var firstResponse = await client.SendAsync(initMessage, TimeSpan.FromSeconds(3), cts.Token);
+      var firstResponse = await client.SendAsync("INIT\r\n", TimeSpan.FromSeconds(3), cts.Token);
       _log.Info($"初期化応答: {firstResponse.Text}");
 
       // 次のリクエストを送信
-      var nextMessage = Message.FromString($"NEXT: {firstResponse.Text}\r\n", System.Text.Encoding.UTF8);
-      var finalResponse = await client.SendAsync(nextMessage, TimeSpan.FromSeconds(3), cts.Token);
+      var finalResponse = await client.SendAsync($"NEXT: {firstResponse.Text}\r\n", TimeSpan.FromSeconds(3), cts.Token);
 
       _log.Info($"最終応答: {finalResponse.Text}");
       _log.Info("チェーン処理が完了しました。");
@@ -670,8 +663,7 @@ class Program
           try
           {
             var sendStart = DateTime.UtcNow;
-            var message = Message.FromString($"{input}".Replace(@"\r", "\r"), System.Text.Encoding.UTF8);
-            var response = await client.SendAsync(message, TimeSpan.FromSeconds(5), cts.Token);
+            var response = await client.SendAsync($"{input}".Replace(@"\r", "\r"), TimeSpan.FromSeconds(5), cts.Token);
             var sendEnd = DateTime.UtcNow;
 
             _log.Info($"[送信] {input}");

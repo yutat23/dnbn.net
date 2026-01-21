@@ -748,6 +748,51 @@ public class TcpClient : ITcpClient
     return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token);
   }
 
+  /// <summary>
+  /// 文字列を送信する（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task SendAsync(string text, CancellationToken cancellationToken = default)
+  {
+    var encoding = GetEncoding(_config.Encoding);
+    var message = Message.FromString(text, encoding);
+    await SendAsync(message, cancellationToken);
+  }
+
+  /// <summary>
+  /// 文字列を送信して応答を待つ（簡易版：すべての応答を受け入れる、設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <returns>受信した応答メッセージ</returns>
+  public async Task<Message> SendAsync(string text, TimeSpan timeout, CancellationToken cancellationToken = default)
+  {
+    var encoding = GetEncoding(_config.Encoding);
+    var message = Message.FromString(text, encoding);
+    return await SendAsync(message, timeout, cancellationToken);
+  }
+
+  /// <summary>
+  /// 文字列を送信して応答を待つ（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="responsePredicate">応答の条件判定関数</param>
+  /// <param name="timeout">タイムアウト時間</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <returns>条件を満たす応答メッセージ</returns>
+  public async Task<Message> SendAndWaitAsync(
+      string text,
+      Func<Message, bool> responsePredicate,
+      TimeSpan timeout,
+      CancellationToken cancellationToken = default)
+  {
+    var encoding = GetEncoding(_config.Encoding);
+    var message = Message.FromString(text, encoding);
+    return await SendAndWaitAsync(message, responsePredicate, timeout, cancellationToken);
+  }
+
   private async Task<Message> SendAndWaitSingleAsync(
       Message requestMessage,
       Func<Message, bool> responsePredicate,

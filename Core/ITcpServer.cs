@@ -72,6 +72,21 @@ public interface ITcpServer : IDisposable
   Task BroadcastAsync(Message message, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// 特定セッションに文字列を送信（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="sessionId">セッションID（SessionInfo.SessionId）</param>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task SendAsync(string sessionId, string text, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// 全セッションに文字列を送信（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task BroadcastAsync(string text, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// セッション情報を取得
   /// </summary>
   SessionInfo? GetSession(string sessionId);

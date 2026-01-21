@@ -288,6 +288,31 @@ public class TcpServer : ITcpServer
   }
 
   /// <summary>
+  /// 特定セッションに文字列を送信（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="sessionId">セッションID</param>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task SendAsync(string sessionId, string text, CancellationToken cancellationToken = default)
+  {
+    var encoding = GetEncoding(_config.Encoding);
+    var message = Message.FromString(text, encoding);
+    await SendAsync(sessionId, message, cancellationToken);
+  }
+
+  /// <summary>
+  /// 全セッションに文字列を送信（設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task BroadcastAsync(string text, CancellationToken cancellationToken = default)
+  {
+    var encoding = GetEncoding(_config.Encoding);
+    var message = Message.FromString(text, encoding);
+    await BroadcastAsync(message, cancellationToken);
+  }
+
+  /// <summary>
   /// 指定セッションの情報を取得
   /// </summary>
   /// <param name="sessionId">セッションID</param>
@@ -295,6 +320,20 @@ public class TcpServer : ITcpServer
   public SessionInfo? GetSession(string sessionId)
   {
     return _sessions.TryGetValue(sessionId, out var session) ? session.SessionInfo : null;
+  }
+
+  /// <summary>
+  /// エンコーディング名からEncodingオブジェクトを取得
+  /// </summary>
+  private Encoding GetEncoding(string encodingName)
+  {
+    return encodingName.ToUpperInvariant() switch
+    {
+      "UTF-8" => Encoding.UTF8,
+      "SHIFT-JIS" or "SHIFTJIS" => Encoding.GetEncoding("shift_jis"),
+      "ASCII" => Encoding.ASCII,
+      _ => Encoding.UTF8
+    };
   }
 
   /// <summary>
