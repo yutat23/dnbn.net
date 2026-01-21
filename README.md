@@ -4,7 +4,7 @@
 [![NuGet version (Dnbn.net)](https://img.shields.io/nuget/v/dnbn.net?link=https%3A%2F%2Fwww.nuget.org%2Fpackages%2Fdnbn.net
 )](https://www.nuget.org/packages/dnbn.net/)
 
-.NET 10+ 対応のTCPメッセージ送受信ライブラリです。
+.NET 8+ 対応のTCPメッセージ送受信ライブラリです。
 
 ## 目次
 
