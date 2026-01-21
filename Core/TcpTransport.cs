@@ -105,7 +105,8 @@ public class TcpTransport : ITransport, IDisposable
   /// </summary>
   public void Dispose()
   {
-    DisconnectAsync().GetAwaiter().GetResult();
+    // ConfigureAwait(false)を使用してデッドロックを回避
+    DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
   }
 }
 

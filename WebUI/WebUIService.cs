@@ -163,7 +163,11 @@ public class WebUIService : IDisposable
             {
               writer.Dispose();
             }
-            catch { }
+            catch (Exception ex)
+            {
+              // Dispose時のエラーは無視するが、ログに記録
+              _logger?.LogDebug(ex, "SSE接続のDispose中にエラーが発生しました（無視されます）");
+            }
           }
           
           if (_config.EnableLogging)
@@ -452,7 +456,11 @@ public class WebUIService : IDisposable
       {
         dead.Dispose();
       }
-      catch { }
+      catch (Exception ex)
+      {
+        // Dispose時のエラーは無視するが、ログに記録
+        _logger?.LogDebug(ex, "SSE接続のDispose中にエラーが発生しました（無視されます）");
+      }
     }
   }
 
@@ -696,7 +704,11 @@ public class WebUIService : IDisposable
       {
         writer.Dispose();
       }
-      catch { }
+      catch (Exception ex)
+      {
+        // Dispose時のエラーは無視するが、ログに記録
+        _logger?.LogDebug(ex, "SSE接続のDispose中にエラーが発生しました（無視されます）");
+      }
     }
     _sseConnections.Clear();
 
@@ -706,10 +718,27 @@ public class WebUIService : IDisposable
       {
         unsubscribe();
       }
-      catch { }
+      catch (Exception ex)
+      {
+        // イベント購読解除時のエラーは無視するが、ログに記録
+        _logger?.LogDebug(ex, "イベント購読解除中にエラーが発生しました（無視されます）");
+      }
     }
     _eventUnsubscribers.Clear();
 
-    _app?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+    // ConfigureAwait(false)を使用してデッドロックを回避
+    if (_app != null)
+    {
+      try
+      {
+        _app.DisposeAsync().AsTask().ConfigureAwait(false).GetAwaiter().GetResult();
+      }
+      catch (Exception ex)
+      {
+        // Dispose時のエラーはログに記録するが、例外は再スローしない
+        // （Disposeメソッドは例外をスローすべきではない）
+        _logger?.LogDebug(ex, "WebアプリケーションのDispose中にエラーが発生しました（無視されます）");
+      }
+    }
   }
 }

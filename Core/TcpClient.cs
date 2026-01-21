@@ -21,9 +21,9 @@ public class TcpClient : ITcpClient
   private readonly ITransport _transport;
   private readonly MessageParser _parser;
   private readonly Subject<Message> _messageReceivedSubject = new();
-  private readonly Channel<SendRequest> _sendQueue;
-  private readonly ChannelWriter<SendRequest> _sendQueueWriter;
-  private readonly ChannelReader<SendRequest> _sendQueueReader;
+  private Channel<SendRequest> _sendQueue = null!;
+  private ChannelWriter<SendRequest> _sendQueueWriter = null!;
+  private ChannelReader<SendRequest> _sendQueueReader = null!;
   private Task? _sendLoopTask;
   private readonly Queue<SendRequest> _pendingResponseRequests = new();
   private readonly object _pendingResponseRequestsLock = new();
@@ -123,6 +123,14 @@ public class TcpClient : ITcpClient
         config.LengthFieldLength);
 
     // 送信キューを初期化
+    InitializeSendQueue();
+  }
+
+  /// <summary>
+  /// 送信キューを初期化
+  /// </summary>
+  private void InitializeSendQueue()
+  {
     var channelOptions = new BoundedChannelOptions(1000)
     {
       FullMode = BoundedChannelFullMode.Wait
@@ -634,6 +642,9 @@ public class TcpClient : ITcpClient
 
                       // 意図的切断フラグをリセット
                       _isIntentionalDisconnect = false;
+
+                      // 送信キューを再初期化（DisconnectAsyncでComplete()が呼ばれているため）
+                      InitializeSendQueue();
 
                       OnConnected?.Invoke(this, EventArgs.Empty);
 
@@ -1267,7 +1278,8 @@ public class TcpClient : ITcpClient
       return;
     }
 
-    DisconnectAsync().GetAwaiter().GetResult();
+    // ConfigureAwait(false)を使用してデッドロックを回避
+    DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
     _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();

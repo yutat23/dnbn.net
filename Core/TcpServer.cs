@@ -390,7 +390,8 @@ public class TcpServer : ITcpServer
       return;
     }
 
-    StopAsync().GetAwaiter().GetResult();
+    // ConfigureAwait(false)を使用してデッドロックを回避
+    StopAsync().ConfigureAwait(false).GetAwaiter().GetResult();
     _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
@@ -610,7 +611,8 @@ public class TcpServer : ITcpServer
         return;
       }
 
-      DisconnectAsync().GetAwaiter().GetResult();
+      // ConfigureAwait(false)を使用してデッドロックを回避
+      DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
       _tcpClient.Dispose();
       _cancellationTokenSource.Dispose();
       _disposed = true;
