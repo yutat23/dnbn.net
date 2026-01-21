@@ -151,8 +151,7 @@ server.OnMessageReceived += (sender, args) =>
     Console.WriteLine($"Received: {message.Text} from {sessionInfo.SessionId}");
     
     // 応答を送信
-    var response = Message.FromString("OK\r", System.Text.Encoding.UTF8);
-    server.SendAsync(sessionInfo.SessionId, response).Wait();
+    await server.SendAsync(sessionInfo.SessionId, "OK\r");
 };
 server.OnClientConnected += (sender, sessionInfo) =>
 {
@@ -194,17 +193,19 @@ client.OnKeepAliveResponseReceived += (sender, message) =>
 await client.ConnectAsync();
 
 // メッセージを送信
-var msg = Message.FromString("HELLO\r", System.Text.Encoding.UTF8);
-await client.SendAsync(msg);
+await client.SendAsync("HELLO\r");
 
 // 応答を待つ
-var response = await client.SendAndWaitAsync(
-    msg,
+var response = await client.SendAsync("HELLO\r", TimeSpan.FromSeconds(3));
+Console.WriteLine($"Response: {response.Text}");
+
+// 条件付きで応答を待つ場合
+var response2 = await client.SendAndWaitAsync(
+    "HELLO\r",
     m => m.Code == "OK" || m.Text?.StartsWith("OK") == true,
     TimeSpan.FromSeconds(3)
 );
-
-Console.WriteLine($"Response: {response.Text}");
+Console.WriteLine($"Response: {response2.Text}");
 ```
 
 ## 設定リファレンス
@@ -609,45 +610,65 @@ await client.ConnectAsync();
 await client.DisconnectAsync(true);
 ```
 
-##### `Task SendAsync(Message message)`
+##### `Task SendAsync(string text, CancellationToken cancellationToken = default)`
 
-メッセージを送信します。応答は待ちません。応答は`OnMessageReceived`イベントで受け取ります。
+文字列を送信します。応答は待ちません。応答は`OnMessageReceived`イベントで受け取ります。
+**設定のEncodingが自動的に使用されます。**
 
 ```csharp
-var msg = Message.FromString("HELLO\r", System.Text.Encoding.UTF8);
-await client.SendAsync(msg);
+await client.SendAsync("HELLO\r");
 ```
 
-##### `Task<Message> SendAsync(Message message, TimeSpan timeout)`
+##### `Task<Message> SendAsync(string text, TimeSpan timeout, CancellationToken cancellationToken = default)`
 
-メッセージを送信して応答を待ちます。簡易版で、すべての応答を受け入れます。
+文字列を送信して応答を待ちます。簡易版で、すべての応答を受け入れます。
+**設定のEncodingが自動的に使用されます。**
 
 ```csharp
-var msg = Message.FromString("HELLO\r", System.Text.Encoding.UTF8);
-var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
+var response = await client.SendAsync("HELLO\r", TimeSpan.FromSeconds(5));
 Console.WriteLine($"Response: {response.Text}");
 ```
 
 **注意**: このメソッドを使用した場合、応答は`OnMessageReceived`イベントでは発行されません（キューイング方式）。
 
-##### `Task<Message> SendAndWaitAsync(Message requestMessage, Func<Message, bool> responsePredicate, TimeSpan timeout)`
+##### `Task<Message> SendAndWaitAsync(string text, Func<Message, bool> responsePredicate, TimeSpan timeout, CancellationToken cancellationToken = default)`
 
-メッセージを送信して、条件に一致する応答を待ちます。
+文字列を送信して、条件に一致する応答を待ちます。
+**設定のEncodingが自動的に使用されます。**
 
-- `requestMessage`: 送信するメッセージ
+- `text`: 送信する文字列
 - `responsePredicate`: 応答の条件（`true`を返す応答を受け入れる）
 - `timeout`: タイムアウト時間
 
 ```csharp
-var msg = Message.FromString("HELLO\r", System.Text.Encoding.UTF8);
 var response = await client.SendAndWaitAsync(
-    msg,
+    "HELLO\r",
     m => m.Code == "OK" || m.Text?.StartsWith("OK") == true,
     TimeSpan.FromSeconds(3)
 );
 ```
 
 **注意**: このメソッドを使用した場合、応答は`OnMessageReceived`イベントでは発行されません（キューイング方式）。
+
+##### `Message`オブジェクトを受け取るオーバーロード（カスタムEncoding指定用）
+
+カスタムのEncodingを指定したい場合や、`Message`オブジェクトを直接操作したい場合は、以下のオーバーロードを使用できます：
+
+```csharp
+// Messageオブジェクトを使用（カスタムEncoding指定）
+var msg = Message.FromString("HELLO\r", System.Text.Encoding.UTF8);
+await client.SendAsync(msg);
+
+// 応答を待つ
+var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
+
+// 条件付きで応答を待つ
+var response2 = await client.SendAndWaitAsync(
+    msg,
+    m => m.Code == "OK",
+    TimeSpan.FromSeconds(3)
+);
+```
 
 #### 動的設定変更
 
@@ -779,22 +800,37 @@ await server.StartAsync();
 await server.StopAsync();
 ```
 
-##### `Task SendAsync(string sessionId, Message message)`
+##### `Task SendAsync(string sessionId, string text, CancellationToken cancellationToken = default)`
 
-特定のセッションにメッセージを送信します。
+特定のセッションに文字列を送信します。
+**設定のEncodingが自動的に使用されます。**
 
 - `sessionId`: セッションID（`SessionInfo.SessionId`）
+- `text`: 送信する文字列
 
 ```csharp
-var response = Message.FromString("OK\r", System.Text.Encoding.UTF8);
-await server.SendAsync(sessionInfo.SessionId, response);
+await server.SendAsync(sessionInfo.SessionId, "OK\r");
 ```
 
-##### `Task BroadcastAsync(Message message)`
+##### `Task BroadcastAsync(string text, CancellationToken cancellationToken = default)`
 
-全セッションにメッセージをブロードキャストします。
+全セッションに文字列をブロードキャストします。
+**設定のEncodingが自動的に使用されます。**
 
 ```csharp
+await server.BroadcastAsync("ANNOUNCEMENT\r");
+```
+
+##### `Message`オブジェクトを受け取るオーバーロード（カスタムEncoding指定用）
+
+カスタムのEncodingを指定したい場合や、`Message`オブジェクトを直接操作したい場合は、以下のオーバーロードを使用できます：
+
+```csharp
+// Messageオブジェクトを使用（カスタムEncoding指定）
+var response = Message.FromString("OK\r", System.Text.Encoding.UTF8);
+await server.SendAsync(sessionInfo.SessionId, response);
+
+// ブロードキャスト
 var announcement = Message.FromString("ANNOUNCEMENT\r", System.Text.Encoding.UTF8);
 await server.BroadcastAsync(announcement);
 ```
@@ -974,8 +1010,7 @@ server.OnMessageReceived += async (sender, args) =>
     Console.WriteLine($"Received: {message.Text} from {sessionInfo.SessionId}");
     
     // 応答を送信
-    var response = Message.FromString("OK\r", System.Text.Encoding.UTF8);
-    await server.SendAsync(sessionInfo.SessionId, response);
+    await server.SendAsync(sessionInfo.SessionId, "OK\r");
 };
 await server.StartAsync();
 ```
@@ -990,8 +1025,8 @@ client.OnMessageReceived += (sender, message) =>
 };
 await client.ConnectAsync();
 
-var msg = Message.FromString("HELLO\r", System.Text.Encoding.UTF8);
-await client.SendAsync(msg);
+// メッセージを送信
+await client.SendAsync("HELLO\r");
 ```
 
 ### Promise的チェーン処理
@@ -999,14 +1034,11 @@ await client.SendAsync(msg);
 `SendAndWaitAsync`の戻り値は`Task<Message>`なので、`Then`拡張メソッド（`TaskExtensions`）を使用してチェーン処理が可能です。
 
 ```csharp
-var initMessage = Message.FromString("INIT\r", System.Text.Encoding.UTF8);
-
 await client
-    .SendAndWaitAsync(initMessage, m => m.Code == "OK", TimeSpan.FromSeconds(3))
+    .SendAndWaitAsync("INIT\r", m => m.Code == "OK", TimeSpan.FromSeconds(3))
     .Then(async resp =>
     {
-        var next = Message.FromString($"NEXT:{resp.Text}\r", System.Text.Encoding.UTF8);
-        return await client.SendAndWaitAsync(next, m => m.Code == "OK", TimeSpan.FromSeconds(3));
+        return await client.SendAndWaitAsync($"NEXT:{resp.Text}\r", m => m.Code == "OK", TimeSpan.FromSeconds(3));
     })
     .Then(async final =>
     {
@@ -1347,12 +1379,10 @@ foreach (var session in allSessions)
 }
 
 // 特定のセッションにメッセージを送信
-var response = Message.FromString("OK\r", System.Text.Encoding.UTF8);
-await server.SendAsync(sessionId, response);
+await server.SendAsync(sessionId, "OK\r");
 
 // 全セッションにブロードキャスト
-var announcement = Message.FromString("ANNOUNCEMENT\r", System.Text.Encoding.UTF8);
-await server.BroadcastAsync(announcement);
+await server.BroadcastAsync("ANNOUNCEMENT\r");
 ```
 
 ### エラーハンドリング
