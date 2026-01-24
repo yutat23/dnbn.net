@@ -76,7 +76,7 @@ class Program
             .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory, Log4netLoggerFactoryAdapter>()
             .BuildServiceProvider();
         var logger = webUIServiceProvider.GetService<Microsoft.Extensions.Logging.ILogger<Dnbn.WebUI.WebUIService>>();
-        
+
         // 空のサーバーとクライアントのリストでWebUIを起動
         globalWebUIService = new Dnbn.WebUI.WebUIService(
             Array.Empty<ITcpServer>(),
@@ -150,6 +150,7 @@ class Program
   /// </summary>
   static async Task<Dnbn.WebUI.WebUIService?> RunServerMode(ITcpMessengerFactory factory, ILog _log, TcpMessengerConfig? config, Dnbn.WebUI.WebUIService? globalWebUIService, CancellationTokenSource globalCts)
   {
+    _ = globalCts;
     Console.WriteLine("\n=== サーバーモード ===");
     var server = factory.CreateServer("EchoServer");
 
@@ -203,33 +204,18 @@ class Program
     await server.StartAsync(cts.Token);
     _log.Info("サーバーがポート 5000 で起動しました。");
 
-    // Web UIを再起動（サーバーを含める）
-    Dnbn.WebUI.WebUIService? webUIService = null;
-    if (config?.WebUI?.Enabled == true)
+    // Web UIにサーバーを登録
+    Dnbn.WebUI.WebUIService? webUIService = globalWebUIService;
+    if (config?.WebUI?.Enabled == true && webUIService != null)
     {
       try
       {
-        // 既存のWebUIを停止
-        if (globalWebUIService != null)
-        {
-          globalCts.Cancel();
-          await globalWebUIService.StopAsync(CancellationToken.None);
-          await Task.Delay(500); // 少し待機
-          globalWebUIService = null; // 参照をクリア
-        }
-
-        // 新しいWebUIを起動（サーバーを含める）
-        var webUIServiceProvider = new ServiceCollection()
-            .AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(Log4netLoggerAdapter<>))
-            .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory, Log4netLoggerFactoryAdapter>()
-            .BuildServiceProvider();
-        var logger = webUIServiceProvider.GetService<Microsoft.Extensions.Logging.ILogger<Dnbn.WebUI.WebUIService>>();
-        webUIService = await server.StartWebUIAsync(config.WebUI, logger, cts.Token);
-        _log.Info($"Web UIが再起動しました（サーバーモード）: http://{config.WebUI.BindAddress}:{config.WebUI.Port}");
+        webUIService.AddServer(server);
+        _log.Info($"Web UIにサーバーを登録しました（サーバーモード）: http://{config.WebUI.BindAddress}:{config.WebUI.Port}");
       }
       catch (Exception ex)
       {
-        _log.Error("Web UIの再起動に失敗しました", ex);
+        _log.Error("Web UIの登録に失敗しました", ex);
       }
     }
 
@@ -242,7 +228,7 @@ class Program
         var readTask = Task.Run(() => Console.ReadLine());
         var cancelTask = Task.Delay(TimeSpan.FromMilliseconds(int.MaxValue), cts.Token).ContinueWith(_ => (string?)null);
         var completedTask = await Task.WhenAny(readTask, cancelTask);
-        
+
         if (completedTask == readTask)
         {
           var input = await readTask;
@@ -265,19 +251,6 @@ class Program
     }
     finally
     {
-      // Web UIを停止
-      if (webUIService != null)
-      {
-        try
-        {
-          await webUIService.StopAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-          _log.Error("Web UI停止中にエラーが発生しました", ex);
-        }
-      }
-
       if (server.IsRunning)
       {
         _log.Info("サーバーを停止しています...");
@@ -300,6 +273,7 @@ class Program
   /// </summary>
   static async Task<Dnbn.WebUI.WebUIService?> RunClientMode(ITcpMessengerFactory factory, ILog _log, TcpMessengerConfig? config, Dnbn.WebUI.WebUIService? globalWebUIService, CancellationTokenSource globalCts)
   {
+    _ = globalCts;
     Console.WriteLine("\n=== クライアントモード ===");
     Console.WriteLine("メッセージ送受信ログが有効になっています（appsettings.jsonのEnableMessageLogging: true）");
     Console.WriteLine("DEBUGレベルのログでメッセージの送受信が出力されます。\n");
@@ -355,34 +329,12 @@ class Program
 
     await client.ConnectAsync(cts.Token);
 
-    // Web UIを再起動（クライアントを含める）
-    Dnbn.WebUI.WebUIService? webUIService = null;
-    if (config?.WebUI?.Enabled == true)
+    // Web UIにクライアントを登録
+    Dnbn.WebUI.WebUIService? webUIService = globalWebUIService;
+    if (config?.WebUI?.Enabled == true && webUIService != null)
     {
-      try
-      {
-        // 既存のWebUIを停止
-        if (globalWebUIService != null)
-        {
-          globalCts.Cancel();
-          await globalWebUIService.StopAsync(CancellationToken.None);
-          await Task.Delay(500); // 少し待機
-          globalWebUIService = null; // 参照をクリア
-        }
-
-        // 新しいWebUIを起動（クライアントを含める）
-        var serviceProvider = new ServiceCollection()
-            .AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(Log4netLoggerAdapter<>))
-            .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory, Log4netLoggerFactoryAdapter>()
-            .BuildServiceProvider();
-        var logger = serviceProvider.GetService<Microsoft.Extensions.Logging.ILogger<Dnbn.WebUI.WebUIService>>();
-        webUIService = await client.StartWebUIAsync(config.WebUI, logger, cts.Token);
-        _log.Info($"Web UIが再起動しました（クライアントモード）: http://{config.WebUI.BindAddress}:{config.WebUI.Port}");
-      }
-      catch (Exception ex)
-      {
-        _log.Error("Web UIの再起動に失敗しました", ex);
-      }
+      webUIService.AddClient(client);
+      _log.Info($"Web UIにクライアントを登録しました（クライアントモード）: http://{config.WebUI.BindAddress}:{config.WebUI.Port}");
     }
 
     Console.WriteLine("\nメッセージを入力してください（終了するには 'quit' を入力するか、Ctrl-Cを押してください）:");
@@ -395,7 +347,7 @@ class Program
         var readTask = Task.Run(() => Console.ReadLine());
         var cancelTask = Task.Delay(TimeSpan.FromMilliseconds(int.MaxValue), cts.Token).ContinueWith(_ => (string?)null);
         var completedTask = await Task.WhenAny(readTask, cancelTask);
-        
+
         if (completedTask == readTask)
         {
           var input = await readTask;
@@ -444,19 +396,6 @@ class Program
     }
     finally
     {
-      // Web UIを停止
-      if (webUIService != null)
-      {
-        try
-        {
-          await webUIService.StopAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-          _log.Error("Web UI停止中にエラーが発生しました", ex);
-        }
-      }
-
       if (client.IsConnected)
       {
         _log.Info("接続を切断しています...");
@@ -479,6 +418,7 @@ class Program
   /// </summary>
   static async Task<Dnbn.WebUI.WebUIService?> RunIntegratedMode(ITcpMessengerFactory factory, ILog _log, TcpMessengerConfig? config, Dnbn.WebUI.WebUIService? globalWebUIService, CancellationTokenSource globalCts)
   {
+    _ = globalCts;
     Console.WriteLine("\n=== 統合モード（サーバー + クライアント） ===");
     Console.WriteLine("メッセージ送受信ログが有効になっています（appsettings.jsonのEnableMessageLogging: true）");
     Console.WriteLine("DEBUGレベルのログでメッセージの送受信が出力されます。\n");
@@ -529,34 +469,13 @@ class Program
     await client.ConnectAsync(cts.Token);
     _log.Info("クライアントが接続しました。");
 
-    // Web UIを再起動（サーバーとクライアントを含める）
-    Dnbn.WebUI.WebUIService? webUIService = null;
-    if (config?.WebUI?.Enabled == true)
+    // Web UIにサーバー/クライアントを登録
+    Dnbn.WebUI.WebUIService? webUIService = globalWebUIService;
+    if (config?.WebUI?.Enabled == true && webUIService != null)
     {
-      try
-      {
-        // 既存のWebUIを停止
-        if (globalWebUIService != null)
-        {
-          globalCts.Cancel();
-          await globalWebUIService.StopAsync(CancellationToken.None);
-          await Task.Delay(500); // 少し待機
-          globalWebUIService = null; // 参照をクリア
-        }
-
-        // 新しいWebUIを起動（サーバーとクライアントを含める）
-        var serviceProvider = new ServiceCollection()
-            .AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(Log4netLoggerAdapter<>))
-            .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory, Log4netLoggerFactoryAdapter>()
-            .BuildServiceProvider();
-        var logger = serviceProvider.GetService<Microsoft.Extensions.Logging.ILogger<Dnbn.WebUI.WebUIService>>();
-        webUIService = await new[] { server }.StartWebUIAsync(new[] { client }, config.WebUI, logger, cts.Token);
-        _log.Info($"Web UIが再起動しました（統合モード）: http://{config.WebUI.BindAddress}:{config.WebUI.Port}");
-      }
-      catch (Exception ex)
-      {
-        _log.Error("Web UIの再起動に失敗しました", ex);
-      }
+      webUIService.AddServer(server);
+      webUIService.AddClient(client);
+      _log.Info($"Web UIにサーバー/クライアントを登録しました（統合モード）: http://{config.WebUI.BindAddress}:{config.WebUI.Port}");
     }
 
     // キューイング方式のSendAsyncの動作確認
@@ -639,7 +558,7 @@ class Program
         var readTask = Task.Run(() => Console.ReadLine());
         var cancelTask = Task.Delay(TimeSpan.FromMilliseconds(int.MaxValue), cts.Token).ContinueWith(_ => (string?)null);
         var completedTask = await Task.WhenAny(readTask, cancelTask);
-        
+
         if (completedTask == readTask)
         {
           var input = await readTask;
@@ -695,19 +614,6 @@ class Program
     }
     finally
     {
-      // Web UIを停止
-      if (webUIService != null)
-      {
-        try
-        {
-          await webUIService.StopAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-          _log.Error("Web UI停止中にエラーが発生しました", ex);
-        }
-      }
-
       // クリーンアップ: クライアントとサーバーを適切に切断・停止
       if (client.IsConnected)
       {
@@ -853,7 +759,7 @@ class Program
     }
 
     bool enabled = parts[2].ToLower() == "enable" || parts[2].ToLower() == "enabled";
-    
+
     if (!enabled)
     {
       client.KeepAlive = new KeepAliveConfig { Enabled = false };
@@ -1022,7 +928,7 @@ class Program
   static async Task StartHttpServer(ITcpServer server, ITcpClient client, ILog log)
   {
     var builder = WebApplication.CreateBuilder();
-    
+
     // CORSサービスを追加
     builder.Services.AddCors(options =>
     {
@@ -1033,7 +939,7 @@ class Program
               .AllowAnyHeader();
       });
     });
-    
+
     var app = builder.Build();
 
     // CORSミドルウェアを使用
@@ -1236,4 +1142,3 @@ internal class SampleLoggingFilter : IMessageFilter
     return Task.FromResult(msg);
   }
 }
-

@@ -24,7 +24,9 @@ public class WebUIService : IDisposable
   private readonly ILogger? _logger;
   private readonly CancellationTokenSource _cancellationTokenSource = new();
   private readonly ConcurrentBag<StreamWriter> _sseConnections = new();
-  private readonly List<Action> _eventUnsubscribers = new();
+  private readonly Dictionary<ITcpClient, ClientEventHandlers> _clientHandlers = new();
+  private readonly Dictionary<ITcpServer, ServerEventHandlers> _serverHandlers = new();
+  private readonly object _sync = new();
   private Timer? _updateTimer;
   private WebApplication? _app;
   private readonly JsonSerializerOptions _jsonOptions = new()
@@ -44,8 +46,60 @@ public class WebUIService : IDisposable
   {
     _servers = servers.ToList();
     _clients = clients.ToList();
-    _config = config;
-    _logger = logger;
+      _config = config;
+      _logger = logger;
+  }
+
+  /// <summary>
+  /// Web UIの監視対象にクライアントを追加
+  /// </summary>
+  /// <returns>追加に成功した場合はtrue、既に追加済みの場合はfalse</returns>
+  public bool AddClient(ITcpClient client)
+  {
+    if (client == null)
+    {
+      throw new ArgumentNullException(nameof(client));
+    }
+
+    lock (_sync)
+    {
+      if (_clients.Contains(client))
+      {
+        return false;
+      }
+
+      _clients.Add(client);
+      SubscribeClient(client);
+    }
+
+    _ = NotifyAllConnections();
+    return true;
+  }
+
+  /// <summary>
+  /// Web UIの監視対象にサーバーを追加
+  /// </summary>
+  /// <returns>追加に成功した場合はtrue、既に追加済みの場合はfalse</returns>
+  public bool AddServer(ITcpServer server)
+  {
+    if (server == null)
+    {
+      throw new ArgumentNullException(nameof(server));
+    }
+
+    lock (_sync)
+    {
+      if (_servers.Contains(server))
+      {
+        return false;
+      }
+
+      _servers.Add(server);
+      SubscribeServer(server);
+    }
+
+    _ = NotifyAllConnections();
+    return true;
   }
 
   /// <summary>
@@ -287,18 +341,20 @@ public class WebUIService : IDisposable
     _updateTimer?.Dispose();
 
     // イベントハンドラを解除
-    foreach (var unsubscribe in _eventUnsubscribers)
+    lock (_sync)
     {
-      try
+      foreach (var pair in _clientHandlers)
       {
-        unsubscribe();
+        UnsubscribeClient(pair.Key, pair.Value);
       }
-      catch (Exception ex)
+      _clientHandlers.Clear();
+
+      foreach (var pair in _serverHandlers)
       {
-        _logger?.LogError(ex, "イベントハンドラの解除中にエラーが発生しました");
+        UnsubscribeServer(pair.Key, pair.Value);
       }
+      _serverHandlers.Clear();
     }
-    _eventUnsubscribers.Clear();
 
     // SSE接続を閉じる（Webアプリケーション停止前に明示的に閉じる）
     foreach (var writer in _sseConnections)
@@ -381,42 +437,111 @@ public class WebUIService : IDisposable
   /// </summary>
   private void RegisterEventHandlers()
   {
-    // クライアントのイベントを監視
-    foreach (var client in _clients)
+    lock (_sync)
     {
-      client.OnConnected += async (sender, args) => await NotifyAllConnections();
-      client.OnDisconnected += async (sender, args) => await NotifyAllConnections();
-      client.OnMessageReceived += async (sender, message) => await NotifyAllConnections();
-      client.OnKeepAliveResponseReceived += async (sender, message) => await NotifyAllConnections();
-      client.OnError += async (sender, exception) => await NotifyAllConnections();
-
-      // イベントハンドラの解除用アクションを保存
-      _eventUnsubscribers.Add(() =>
+      // クライアントのイベントを監視
+      foreach (var client in _clients)
       {
-        client.OnConnected -= async (sender, args) => await NotifyAllConnections();
-        client.OnDisconnected -= async (sender, args) => await NotifyAllConnections();
-        client.OnMessageReceived -= async (sender, message) => await NotifyAllConnections();
-        client.OnKeepAliveResponseReceived -= async (sender, message) => await NotifyAllConnections();
-        client.OnError -= async (sender, exception) => await NotifyAllConnections();
-      });
+        SubscribeClient(client);
+      }
+
+      // サーバーのイベントを監視
+      foreach (var server in _servers)
+      {
+        SubscribeServer(server);
+      }
+    }
+  }
+
+  private void SubscribeClient(ITcpClient client)
+  {
+    if (_clientHandlers.ContainsKey(client))
+    {
+      return;
     }
 
-    // サーバーのイベントを監視
-    foreach (var server in _servers)
+    var handlers = new ClientEventHandlers
     {
-      server.OnClientConnected += async (sender, sessionInfo) => await NotifyAllConnections();
-      server.OnClientDisconnected += async (sender, sessionInfo) => await NotifyAllConnections();
-      server.OnMessageReceived += async (sender, args) => await NotifyAllConnections();
-      server.OnError += async (sender, args) => await NotifyAllConnections();
+      Connected = async (sender, args) => await NotifyAllConnections(),
+      Disconnected = async (sender, args) => await NotifyAllConnections(),
+      MessageReceived = async (sender, message) => await NotifyAllConnections(),
+      KeepAliveResponseReceived = async (sender, message) => await NotifyAllConnections(),
+      Error = async (sender, exception) => await NotifyAllConnections()
+    };
 
-      // イベントハンドラの解除用アクションを保存
-      _eventUnsubscribers.Add(() =>
-      {
-        server.OnClientConnected -= async (sender, sessionInfo) => await NotifyAllConnections();
-        server.OnClientDisconnected -= async (sender, sessionInfo) => await NotifyAllConnections();
-        server.OnMessageReceived -= async (sender, args) => await NotifyAllConnections();
-        server.OnError -= async (sender, args) => await NotifyAllConnections();
-      });
+    client.OnConnected += handlers.Connected;
+    client.OnDisconnected += handlers.Disconnected;
+    client.OnMessageReceived += handlers.MessageReceived;
+    client.OnKeepAliveResponseReceived += handlers.KeepAliveResponseReceived;
+    client.OnError += handlers.Error;
+
+    _clientHandlers.Add(client, handlers);
+  }
+
+  private void SubscribeServer(ITcpServer server)
+  {
+    if (_serverHandlers.ContainsKey(server))
+    {
+      return;
+    }
+
+    var handlers = new ServerEventHandlers
+    {
+      ClientConnected = async (sender, sessionInfo) => await NotifyAllConnections(),
+      ClientDisconnected = async (sender, sessionInfo) => await NotifyAllConnections(),
+      MessageReceived = async (sender, args) => await NotifyAllConnections(),
+      Error = async (sender, args) => await NotifyAllConnections()
+    };
+
+    server.OnClientConnected += handlers.ClientConnected;
+    server.OnClientDisconnected += handlers.ClientDisconnected;
+    server.OnMessageReceived += handlers.MessageReceived;
+    server.OnError += handlers.Error;
+
+    _serverHandlers.Add(server, handlers);
+  }
+
+  private static void UnsubscribeClient(ITcpClient client, ClientEventHandlers handlers)
+  {
+    if (handlers.Connected != null)
+    {
+      client.OnConnected -= handlers.Connected;
+    }
+    if (handlers.Disconnected != null)
+    {
+      client.OnDisconnected -= handlers.Disconnected;
+    }
+    if (handlers.MessageReceived != null)
+    {
+      client.OnMessageReceived -= handlers.MessageReceived;
+    }
+    if (handlers.KeepAliveResponseReceived != null)
+    {
+      client.OnKeepAliveResponseReceived -= handlers.KeepAliveResponseReceived;
+    }
+    if (handlers.Error != null)
+    {
+      client.OnError -= handlers.Error;
+    }
+  }
+
+  private static void UnsubscribeServer(ITcpServer server, ServerEventHandlers handlers)
+  {
+    if (handlers.ClientConnected != null)
+    {
+      server.OnClientConnected -= handlers.ClientConnected;
+    }
+    if (handlers.ClientDisconnected != null)
+    {
+      server.OnClientDisconnected -= handlers.ClientDisconnected;
+    }
+    if (handlers.MessageReceived != null)
+    {
+      server.OnMessageReceived -= handlers.MessageReceived;
+    }
+    if (handlers.Error != null)
+    {
+      server.OnError -= handlers.Error;
     }
   }
 
@@ -538,7 +663,13 @@ public class WebUIService : IDisposable
   /// </summary>
   private object[] GetClientStatuses()
   {
-    return _clients.Select<ITcpClient, object>(client =>
+    List<ITcpClient> clients;
+    lock (_sync)
+    {
+      clients = _clients.ToList();
+    }
+
+    return clients.Select<ITcpClient, object>(client =>
     {
       try
       {
@@ -603,7 +734,13 @@ public class WebUIService : IDisposable
   /// </summary>
   private object[] GetServerStatuses()
   {
-    return _servers.Select<ITcpServer, object>(server =>
+    List<ITcpServer> servers;
+    lock (_sync)
+    {
+      servers = _servers.ToList();
+    }
+
+    return servers.Select<ITcpServer, object>(server =>
     {
       try
       {
@@ -712,19 +849,34 @@ public class WebUIService : IDisposable
     }
     _sseConnections.Clear();
 
-    foreach (var unsubscribe in _eventUnsubscribers)
+    lock (_sync)
     {
-      try
+      foreach (var pair in _clientHandlers)
       {
-        unsubscribe();
+        try
+        {
+          UnsubscribeClient(pair.Key, pair.Value);
+        }
+        catch (Exception ex)
+        {
+          _logger?.LogDebug(ex, "イベント購読解除中にエラーが発生しました（無視されます）");
+        }
       }
-      catch (Exception ex)
+      _clientHandlers.Clear();
+
+      foreach (var pair in _serverHandlers)
       {
-        // イベント購読解除時のエラーは無視するが、ログに記録
-        _logger?.LogDebug(ex, "イベント購読解除中にエラーが発生しました（無視されます）");
+        try
+        {
+          UnsubscribeServer(pair.Key, pair.Value);
+        }
+        catch (Exception ex)
+        {
+          _logger?.LogDebug(ex, "イベント購読解除中にエラーが発生しました（無視されます）");
+        }
       }
+      _serverHandlers.Clear();
     }
-    _eventUnsubscribers.Clear();
 
     // ConfigureAwait(false)を使用してデッドロックを回避
     if (_app != null)
@@ -740,5 +892,22 @@ public class WebUIService : IDisposable
         _logger?.LogDebug(ex, "WebアプリケーションのDispose中にエラーが発生しました（無視されます）");
       }
     }
+  }
+
+  private sealed class ClientEventHandlers
+  {
+    public EventHandler? Connected { get; init; }
+    public EventHandler? Disconnected { get; init; }
+    public EventHandler<Message>? MessageReceived { get; init; }
+    public EventHandler<Message>? KeepAliveResponseReceived { get; init; }
+    public EventHandler<Exception>? Error { get; init; }
+  }
+
+  private sealed class ServerEventHandlers
+  {
+    public EventHandler<SessionInfo>? ClientConnected { get; init; }
+    public EventHandler<SessionInfo>? ClientDisconnected { get; init; }
+    public EventHandler<(Message message, SessionInfo sessionInfo)>? MessageReceived { get; init; }
+    public EventHandler<(Exception exception, SessionInfo? sessionInfo)>? Error { get; init; }
   }
 }
