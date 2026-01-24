@@ -58,7 +58,7 @@
 - 動的設定変更機能（実行時にKeepAlive、タイムアウト、リトライポリシーなどを変更可能）
 - 複数クライアントを同一ポートで受信可能
 - appsettings.json統合設定
-- Web UI機能（TCP Messengerの状態をWebブラウザでリアルタイム表示、SSEによる自動更新）
+- Web UI機能（拡張機能パッケージ `dnbn.net.WebUI` として提供）
 
 ## インストール
 
@@ -67,6 +67,16 @@
 ```bash
 dotnet add package dnbn.net
 ```
+
+### Web UI機能を使用する場合
+
+Web UI機能を使用する場合は、追加で拡張機能パッケージをインストールしてください：
+
+```bash
+dotnet add package dnbn.net.WebUI
+```
+
+**注**: Web UI機能はオプションです。Web UIを使用しない場合は、本体パッケージ（`dnbn.net`）のみで十分です。
 
 ## クイックスタート
 
@@ -1434,6 +1444,12 @@ catch (Exception ex)
 
 TCP Messengerの状態をWebブラウザでリアルタイムに表示する機能です。
 
+**重要**: Web UI機能を使用するには、拡張機能パッケージ `dnbn.net.WebUI` をインストールする必要があります。
+
+```bash
+dotnet add package dnbn.net.WebUI
+```
+
 #### 基本的な使用方法
 
 **appsettings.jsonに設定を追加**:
@@ -1457,11 +1473,11 @@ TCP Messengerの状態をWebブラウザでリアルタイムに表示する機�
 **サーバー単体でWeb UIを起動**:
 
 ```csharp
-using Dnbn.Extensions;
+using Dnbn.Extensions;  // WebUI拡張メソッドを含む
 using Dnbn.Configuration;
 
 var factory = serviceProvider.GetRequiredService<ITcpMessengerFactory>();
-var tcpMessengerConfig = configuration.GetSection("TcpMessenger").Get<TcpMessengerConfig>();
+var tcpMessengerConfig = configuration.GetSection("dnbn.net").Get<TcpMessengerConfig>();
 
 var server = factory.CreateServer("MainServer");
 await server.StartAsync();
@@ -1481,6 +1497,8 @@ if (tcpMessengerConfig?.WebUI?.Enabled == true)
 **クライアント単体でWeb UIを起動**:
 
 ```csharp
+using Dnbn.Extensions;  // WebUI拡張メソッドを含む
+
 var client = factory.CreateClient("ControllerA");
 await client.ConnectAsync();
 
@@ -1499,6 +1517,8 @@ if (tcpMessengerConfig?.WebUI?.Enabled == true)
 **統合モード（複数のサーバーとクライアント）でWeb UIを起動**:
 
 ```csharp
+using Dnbn.Extensions;  // WebUI拡張メソッドを含む
+
 var servers = new[] { server1, server2 };
 var clients = new[] { client1, client2 };
 

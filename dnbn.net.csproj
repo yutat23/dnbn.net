@@ -11,7 +11,7 @@
     <Authors>dnbn.net</Authors>
     <Description>TCPメッセージ送受信ライブラリ</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>1.1.8</Version>
+    <Version>1.1.9</Version>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <NoWarn>$(NoWarn);NU1510</NoWarn>
   </PropertyGroup>
@@ -30,18 +30,13 @@
   <ItemGroup>
     <Compile Remove="Samples\**" />
     <None Remove="Samples\**" />
+    <Compile Remove="Extensions\Dnbn.WebUI\**" />
+    <None Remove="Extensions\Dnbn.WebUI\**" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="WebUI\wwwroot\**\*" />
-  </ItemGroup>
 
 </Project>

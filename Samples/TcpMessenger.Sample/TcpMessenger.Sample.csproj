@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\dnbn.net.csproj" />
+    <ProjectReference Include="..\..\Extensions\Dnbn.WebUI\Dnbn.WebUI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

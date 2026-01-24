@@ -671,8 +671,8 @@ public class WebUIService : IDisposable
   private string GetEmbeddedResource(string path)
   {
     var assembly = Assembly.GetExecutingAssembly();
-    var assemblyName = assembly.GetName().Name ?? "dnbn.net";
-    var resourceName = $"{assemblyName}.WebUI.wwwroot.{path.Replace('/', '.')}";
+    var assemblyName = assembly.GetName().Name ?? "Dnbn.WebUI";
+    var resourceName = $"{assemblyName}.wwwroot.{path.Replace('/', '.')}";
 
     using var stream = assembly.GetManifestResourceStream(resourceName);
     if (stream == null)
