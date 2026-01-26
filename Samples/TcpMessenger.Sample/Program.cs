@@ -2,7 +2,6 @@ using Dnbn.Configuration;
 using Dnbn.Core;
 using Dnbn.Extensions;
 using Dnbn.Filters;
-using Dnbn.Logging;
 using Dnbn.Models;
 using log4net;
 using log4net.Config;
@@ -11,6 +10,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System.Reactive.Linq;
 using System.Text.Json;
 
@@ -49,8 +49,11 @@ class Program
     // サービスを登録
     var services = new ServiceCollection();
 
-    // log4netアダプターを使用してTCP Messengerサービスを登録
-    services.AddTcpMessengerWithLog4net(configuration);
+    // log4netプロバイダーを追加（推奨方法）
+    services.AddLogging(builder => builder.AddLog4Net());
+
+    // TCP Messengerサービスを登録
+    services.AddTcpMessenger(configuration);
 
     // ログフィルターを登録（オプション）
     services.AddSingleton<IMessageFilter, SampleLoggingFilter>();
@@ -72,10 +75,9 @@ class Program
       try
       {
         var webUIServiceProvider = new ServiceCollection()
-            .AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(Log4netLoggerAdapter<>))
-            .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory, Log4netLoggerFactoryAdapter>()
+            .AddLogging(builder => builder.AddLog4Net())
             .BuildServiceProvider();
-        var logger = webUIServiceProvider.GetService<Microsoft.Extensions.Logging.ILogger<Dnbn.WebUI.WebUIService>>();
+        var logger = webUIServiceProvider.GetRequiredService<ILogger<Dnbn.WebUI.WebUIService>>();
 
         // 空のサーバーとクライアントのリストでWebUIを起動
         globalWebUIService = new Dnbn.WebUI.WebUIService(

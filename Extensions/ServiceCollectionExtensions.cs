@@ -65,40 +65,64 @@ public static class ServiceCollectionExtensions
 
   /// <summary>
   /// TCP Messengerサービスをlog4netと共に登録
-  /// アプリ側でlog4netが設定済みの場合、その設定を使用してログ出力します
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// このメソッドは互換性のために残されていますが、<strong>非推奨</strong>です。
+  /// </para>
+  /// <para>
+  /// <strong>推奨される方法</strong>：アプリ側で<see href="https://www.nuget.org/packages/Microsoft.Extensions.Logging.Log4Net.AspNetCore">Microsoft.Extensions.Logging.Log4Net.AspNetCore</see>パッケージを使用してください。
+  /// </para>
+  /// <para>
+  /// 使用例：
+  /// <code>
+  /// services.AddLogging(builder => builder.AddLog4Net());
+  /// services.AddTcpMessenger(configuration);
+  /// </code>
+  /// </para>
+  /// </remarks>
   /// <param name="services">サービスコレクション</param>
   /// <param name="configuration">設定</param>
   /// <returns>サービスコレクション</returns>
+  [Obsolete("このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(configuration)を使用してください。")]
   public static IServiceCollection AddTcpMessengerWithLog4net(
       this IServiceCollection services,
       IConfiguration configuration)
   {
-    // log4netアダプターを登録
-    services.AddSingleton(typeof(ILogger<>), typeof(Log4netLoggerAdapter<>));
-    services.AddSingleton<ILoggerFactory, Log4netLoggerFactoryAdapter>();
-
-    // TCP Messengerサービスを登録
-    return services.AddTcpMessenger(configuration);
+    throw new NotSupportedException(
+      "このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreパッケージをインストールし、" +
+      "services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(configuration)を使用してください。");
   }
 
   /// <summary>
   /// TCP Messengerサービスをlog4netと共に登録（設定オブジェクトを直接指定）
-  /// アプリ側でlog4netが設定済みの場合、その設定を使用してログ出力します
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// このメソッドは互換性のために残されていますが、<strong>非推奨</strong>です。
+  /// </para>
+  /// <para>
+  /// <strong>推奨される方法</strong>：アプリ側で<see href="https://www.nuget.org/packages/Microsoft.Extensions.Logging.Log4Net.AspNetCore">Microsoft.Extensions.Logging.Log4Net.AspNetCore</see>パッケージを使用してください。
+  /// </para>
+  /// <para>
+  /// 使用例：
+  /// <code>
+  /// services.AddLogging(builder => builder.AddLog4Net());
+  /// services.AddTcpMessenger(config);
+  /// </code>
+  /// </para>
+  /// </remarks>
   /// <param name="services">サービスコレクション</param>
   /// <param name="config">設定オブジェクト</param>
   /// <returns>サービスコレクション</returns>
+  [Obsolete("このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(config)を使用してください。")]
   public static IServiceCollection AddTcpMessengerWithLog4net(
       this IServiceCollection services,
       TcpMessengerConfig config)
   {
-    // log4netアダプターを登録
-    services.AddSingleton(typeof(ILogger<>), typeof(Log4netLoggerAdapter<>));
-    services.AddSingleton<ILoggerFactory, Log4netLoggerFactoryAdapter>();
-
-    // TCP Messengerサービスを登録
-    return services.AddTcpMessenger(config);
+    throw new NotSupportedException(
+      "このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreパッケージをインストールし、" +
+      "services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(config)を使用してください。");
   }
 }
 

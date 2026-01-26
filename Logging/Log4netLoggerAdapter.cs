@@ -1,22 +1,38 @@
 using Microsoft.Extensions.Logging;
-using log4net;
 
 namespace Dnbn.Logging;
 
 /// <summary>
 /// log4netのILogをMicrosoft.Extensions.Logging.ILoggerにアダプトするクラス
 /// </summary>
+/// <remarks>
+/// <para>
+/// このクラスは互換性のために残されていますが、<strong>非推奨</strong>です。
+/// </para>
+/// <para>
+/// <strong>推奨される方法</strong>：アプリ側で<see href="https://www.nuget.org/packages/Microsoft.Extensions.Logging.Log4Net.AspNetCore">Microsoft.Extensions.Logging.Log4Net.AspNetCore</see>パッケージを使用してください。
+/// </para>
+/// <para>
+/// アプリ側での使用例：
+/// <code>
+/// services.AddLogging(builder => builder.AddLog4Net());
+/// services.AddTcpMessenger(configuration);
+/// </code>
+/// </para>
+/// </remarks>
 /// <typeparam name="T">ロガーのカテゴリ型</typeparam>
+[Obsolete("このクラスは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。")]
 public class Log4netLoggerAdapter<T> : ILogger<T>
 {
-  private readonly ILog _log4netLogger;
-
   /// <summary>
   /// コンストラクタ
   /// </summary>
+  /// <exception cref="NotSupportedException">log4netへの直接依存は削除されました。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。</exception>
   public Log4netLoggerAdapter()
   {
-    _log4netLogger = LogManager.GetLogger(typeof(T));
+    throw new NotSupportedException(
+      "log4netへの直接依存は削除されました。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreパッケージをインストールし、" +
+      "services.AddLogging(builder => builder.AddLog4Net())を使用してください。");
   }
 
   /// <summary>
@@ -32,16 +48,7 @@ public class Log4netLoggerAdapter<T> : ILogger<T>
   /// </summary>
   public bool IsEnabled(LogLevel logLevel)
   {
-    return logLevel switch
-    {
-      LogLevel.Trace or LogLevel.Debug => _log4netLogger.IsDebugEnabled,
-      LogLevel.Information => _log4netLogger.IsInfoEnabled,
-      LogLevel.Warning => _log4netLogger.IsWarnEnabled,
-      LogLevel.Error => _log4netLogger.IsErrorEnabled,
-      LogLevel.Critical => _log4netLogger.IsFatalEnabled,
-      LogLevel.None => false,
-      _ => false
-    };
+    return false;
   }
 
   /// <summary>
@@ -49,75 +56,6 @@ public class Log4netLoggerAdapter<T> : ILogger<T>
   /// </summary>
   public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
   {
-    if (!IsEnabled(logLevel))
-    {
-      return;
-    }
-
-    var message = formatter(state, exception);
-
-    switch (logLevel)
-    {
-      case LogLevel.Trace:
-      case LogLevel.Debug:
-        if (exception != null)
-        {
-          _log4netLogger.Debug(message, exception);
-        }
-        else
-        {
-          _log4netLogger.Debug(message);
-        }
-
-        break;
-
-      case LogLevel.Information:
-        if (exception != null)
-        {
-          _log4netLogger.Info(message, exception);
-        }
-        else
-        {
-          _log4netLogger.Info(message);
-        }
-
-        break;
-
-      case LogLevel.Warning:
-        if (exception != null)
-        {
-          _log4netLogger.Warn(message, exception);
-        }
-        else
-        {
-          _log4netLogger.Warn(message);
-        }
-
-        break;
-
-      case LogLevel.Error:
-        if (exception != null)
-        {
-          _log4netLogger.Error(message, exception);
-        }
-        else
-        {
-          _log4netLogger.Error(message);
-        }
-
-        break;
-
-      case LogLevel.Critical:
-        if (exception != null)
-        {
-          _log4netLogger.Fatal(message, exception);
-        }
-        else
-        {
-          _log4netLogger.Fatal(message);
-        }
-
-        break;
-    }
+    // 何もしない（既にコンストラクタで例外がスローされる）
   }
 }

@@ -1588,11 +1588,17 @@ http://localhost:8080
 
 ### log4netとの統合
 
-このライブラリはlog4netと統合できます。アプリ側でlog4netを使用している場合、その設定に合わせてログ出力されます。
+このライブラリは`Microsoft.Extensions.Logging.ILogger<T>`を使用しているため、アプリ側で任意のログプロバイダーを使用できます。log4netを使用する場合は、**Microsoft.Extensions.Logging.Log4Net.AspNetCore**パッケージを使用してください。
 
-#### log4netの設定
+#### 推奨方法：Microsoft.Extensions.Logging.Log4Net.AspNetCoreを使用
 
-アプリ側でlog4netを設定します（例：`log4net.config`）：
+**1. NuGetパッケージをインストール**
+
+```bash
+dotnet add package Microsoft.Extensions.Logging.Log4Net.AspNetCore
+```
+
+**2. log4netの設定ファイルを作成**（例：`log4net.config`）
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -1623,41 +1629,32 @@ http://localhost:8080
 </log4net>
 ```
 
-#### log4netを使用する場合のサービス登録
+**3. サービス登録**
 
 ```csharp
 using Dnbn.Extensions;
-using log4net.Config;
-
-// log4net設定を読み込む
-XmlConfigurator.Configure(new System.IO.FileInfo("log4net.config"));
+using Microsoft.Extensions.Logging;
 
 var services = new ServiceCollection();
 
-// log4netと共にTCP Messengerサービスを登録
-services.AddTcpMessengerWithLog4net(configuration);
+// log4netプロバイダーを追加
+services.AddLogging(builder => builder.AddLog4Net());
+
+// TCP Messengerサービスを登録
+services.AddTcpMessenger(configuration);
 
 var serviceProvider = services.BuildServiceProvider();
 ```
 
-#### 手動でlog4netアダプターを登録する場合
+#### メリット
 
-```csharp
-using Dnbn.Logging;
-using Microsoft.Extensions.Logging;
+- **ライブラリ側はlog4netを知らない**：dnbn.netは`ILogger<T>`だけに依存し、log4netへの直接依存がありません
+- **柔軟性**：アプリ側で任意のログプロバイダー（Console、NLog、Serilogなど）を選択可能
+- **標準的な方法**：Microsoft.Extensions.Loggingの標準的な使い方に準拠
 
-// log4net設定を読み込む
-XmlConfigurator.Configure(new System.IO.FileInfo("log4net.config"));
+#### 旧方法（非推奨）
 
-var services = new ServiceCollection();
-
-// log4netアダプターを手動で登録
-services.AddSingleton(typeof(ILogger<>), typeof(Log4netLoggerAdapter<>));
-services.AddSingleton<ILoggerFactory, Log4netLoggerFactoryAdapter>();
-
-// TCP Messengerサービスを登録
-services.AddTcpMessenger(configuration);
-```
+以前は`AddTcpMessengerWithLog4net()`メソッドや`Log4netLoggerAdapter`クラスが提供されていましたが、これらは**非推奨**となりました。互換性のために残されていますが、上記の推奨方法を使用してください。
 
 ### メッセージ送受信ログ
 
