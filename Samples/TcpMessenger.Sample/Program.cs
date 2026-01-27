@@ -53,7 +53,7 @@ class Program
     services.AddLogging(builder => builder.AddLog4Net());
 
     // TCP Messengerサービスを登録
-    services.AddTcpMessenger(configuration);
+    services.AddDnbnNet(configuration);
 
     // ログフィルターを登録（オプション）
     services.AddSingleton<IMessageFilter, SampleLoggingFilter>();

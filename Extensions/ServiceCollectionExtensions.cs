@@ -14,9 +14,9 @@ namespace Dnbn.Extensions;
 public static class ServiceCollectionExtensions
 {
   /// <summary>
-  /// TCP Messengerサービスを登録
+  /// Dnbn.Netサービスを登録
   /// </summary>
-  public static IServiceCollection AddTcpMessenger(
+  public static IServiceCollection AddDnbnNet(
       this IServiceCollection services,
       IConfiguration configuration)
   {
@@ -47,9 +47,9 @@ public static class ServiceCollectionExtensions
   }
 
   /// <summary>
-  /// TCP Messengerサービスを登録（設定オブジェクトを直接指定）
+  /// Dnbn.Netサービスを登録（設定オブジェクトを直接指定）
   /// </summary>
-  public static IServiceCollection AddTcpMessenger(
+  public static IServiceCollection AddDnbnNet(
       this IServiceCollection services,
       TcpMessengerConfig config)
   {
@@ -61,6 +61,36 @@ public static class ServiceCollectionExtensions
     services.AddSingleton<ITcpMessengerFactory, TcpMessengerFactory>();
 
     return services;
+  }
+
+  /// <summary>
+  /// TCP Messengerサービスを登録
+  /// </summary>
+  /// <remarks>
+  /// このメソッドは後方互換性のために残されていますが、<strong>非推奨</strong>です。
+  /// 代わりに<see cref="AddDnbnNet(IServiceCollection, IConfiguration)"/>を使用してください。
+  /// </remarks>
+  [Obsolete("このメソッドは非推奨です。代わりに AddDnbnNet を使用してください。")]
+  public static IServiceCollection AddTcpMessenger(
+      this IServiceCollection services,
+      IConfiguration configuration)
+  {
+    return AddDnbnNet(services, configuration);
+  }
+
+  /// <summary>
+  /// TCP Messengerサービスを登録（設定オブジェクトを直接指定）
+  /// </summary>
+  /// <remarks>
+  /// このメソッドは後方互換性のために残されていますが、<strong>非推奨</strong>です。
+  /// 代わりに<see cref="AddDnbnNet(IServiceCollection, TcpMessengerConfig)"/>を使用してください。
+  /// </remarks>
+  [Obsolete("このメソッドは非推奨です。代わりに AddDnbnNet を使用してください。")]
+  public static IServiceCollection AddTcpMessenger(
+      this IServiceCollection services,
+      TcpMessengerConfig config)
+  {
+    return AddDnbnNet(services, config);
   }
 
   /// <summary>
@@ -77,21 +107,21 @@ public static class ServiceCollectionExtensions
   /// 使用例：
   /// <code>
   /// services.AddLogging(builder => builder.AddLog4Net());
-  /// services.AddTcpMessenger(configuration);
+  /// services.AddDnbnNet(configuration);
   /// </code>
   /// </para>
   /// </remarks>
   /// <param name="services">サービスコレクション</param>
   /// <param name="configuration">設定</param>
   /// <returns>サービスコレクション</returns>
-  [Obsolete("このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(configuration)を使用してください。")]
+  [Obsolete("このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddDnbnNet(configuration)を使用してください。")]
   public static IServiceCollection AddTcpMessengerWithLog4net(
       this IServiceCollection services,
       IConfiguration configuration)
   {
     throw new NotSupportedException(
       "このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreパッケージをインストールし、" +
-      "services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(configuration)を使用してください。");
+      "services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddDnbnNet(configuration)を使用してください。");
   }
 
   /// <summary>
@@ -108,21 +138,21 @@ public static class ServiceCollectionExtensions
   /// 使用例：
   /// <code>
   /// services.AddLogging(builder => builder.AddLog4Net());
-  /// services.AddTcpMessenger(config);
+  /// services.AddDnbnNet(config);
   /// </code>
   /// </para>
   /// </remarks>
   /// <param name="services">サービスコレクション</param>
   /// <param name="config">設定オブジェクト</param>
   /// <returns>サービスコレクション</returns>
-  [Obsolete("このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(config)を使用してください。")]
+  [Obsolete("このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreを使用してください。services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddDnbnNet(config)を使用してください。")]
   public static IServiceCollection AddTcpMessengerWithLog4net(
       this IServiceCollection services,
       TcpMessengerConfig config)
   {
     throw new NotSupportedException(
       "このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreパッケージをインストールし、" +
-      "services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddTcpMessenger(config)を使用してください。");
+      "services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddDnbnNet(config)を使用してください。");
   }
 }
 
