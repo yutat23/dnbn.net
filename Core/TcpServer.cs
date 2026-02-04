@@ -230,14 +230,14 @@ public class TcpServer : ITcpServer
     };
 
     _sessions.TryAdd(sessionId, session);
-    
+
     // 接続統計を更新
     Interlocked.Increment(ref _totalConnections);
     lock (_statsLock)
     {
       _lastClientConnectedAt = DateTime.UtcNow;
     }
-    
+
     OnClientConnected?.Invoke(this, sessionInfo);
 
     await session.StartAsync();
@@ -434,7 +434,7 @@ public class TcpServer : ITcpServer
 
       var encoding = GetEncoding(config.Encoding);
       // 受信時の終端文字を決定：ReceiveMessageTerminatorが設定されている場合はそれを使用、未設定の場合はMessageTerminatorを使用
-      string[]? receiveTerminators = config.ReceiveMessageTerminator ?? 
+      string[]? receiveTerminators = config.ReceiveMessageTerminator ??
           (config.MessageTerminator != null ? new[] { config.MessageTerminator } : null);
       _parser = new MessageParser(
           encoding,
@@ -483,11 +483,8 @@ public class TcpServer : ITcpServer
               filteredMessage = await filter.OnReceivedAsync(filteredMessage, ctx);
             }
 
-            // メッセージログ出力（設定が有効な場合）
-            if (_config.EnableMessageLogging)
-            {
-              _logger?.LogDebug("TCP Server '{Name}' received message from session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
-            }
+            // メッセージログ出力
+            _logger?.LogDebug("TCP Server '{Name}' received message from session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
 
             OnMessageReceived?.Invoke(filteredMessage);
           }
@@ -526,15 +523,12 @@ public class TcpServer : ITcpServer
         filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
       }
 
-      // メッセージログ出力（設定が有効な場合）
-      if (_config.EnableMessageLogging)
-      {
-        _logger?.LogDebug("TCP Server '{Name}' sending message to session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
-      }
+      // メッセージログ出力
+      _logger?.LogDebug("TCP Server '{Name}' sending message to session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
 
       // MessageTerminatorを自動的に追加
       var data = AppendMessageTerminatorIfNeeded(filteredMessage);
-      
+
       // 外部CancellationTokenと内部CancellationTokenSourceを統合
       using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
       await _stream.WriteAsync(data, linkedCts.Token);
@@ -573,7 +567,7 @@ public class TcpServer : ITcpServer
 
       var encoding = GetEncoding(_config.Encoding);
       var terminatorBytes = encoding.GetBytes(_config.MessageTerminator);
-      
+
       // 既に終端文字が含まれているかチェック（末尾に一致するか）
       if (message.RawData.Length >= terminatorBytes.Length)
       {
