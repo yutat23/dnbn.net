@@ -202,12 +202,13 @@ client.OnKeepAliveResponseReceived += (sender, message) =>
 
 await client.ConnectAsync();
 
-// メッセージを送信
-await client.SendAsync("HELLO\r");
-
-// 応答を待つ
-var response = await client.SendAsync("HELLO\r", TimeSpan.FromSeconds(3));
+// メッセージを送信して応答を待つ（タイムアウトはデフォルト値を使用）
+var response = await client.SendAsync("HELLO\r");
 Console.WriteLine($"Response: {response.Text}");
+
+// タイムアウトを明示的に指定する場合
+var response2 = await client.SendAsync("HELLO\r", TimeSpan.FromSeconds(3));
+Console.WriteLine($"Response: {response2.Text}");
 
 // 条件付きで応答を待つ場合
 var response2 = await client.SendAndWaitAsync(
@@ -620,26 +621,32 @@ await client.ConnectAsync();
 await client.DisconnectAsync(true);
 ```
 
-##### `Task SendAsync(string text, CancellationToken cancellationToken = default)`
+##### `Task<Message> SendAsync(string text, TimeSpan? timeout = null, CancellationToken cancellationToken = default)`
 
-文字列を送信します。応答は待ちません。応答は`OnMessageReceived`イベントで受け取ります。
+文字列を送信して応答を待ちます（HTTPクライアントのように）。応答が来るまで次のメッセージは送信されません。
 **設定のEncodingが自動的に使用されます。**
 
-```csharp
-await client.SendAsync("HELLO\r");
-```
-
-##### `Task<Message> SendAsync(string text, TimeSpan timeout, CancellationToken cancellationToken = default)`
-
-文字列を送信して応答を待ちます。簡易版で、すべての応答を受け入れます。
-**設定のEncodingが自動的に使用されます。**
+- `timeout`: タイムアウト時間。`null`の場合は`ClientConfig.TimeoutMilliseconds`を使用します
+- `cancellationToken`: キャンセレーショントークン
 
 ```csharp
-var response = await client.SendAsync("HELLO\r", TimeSpan.FromSeconds(5));
+// タイムアウトはデフォルト値（ClientConfig.TimeoutMilliseconds）を使用
+var response = await client.SendAsync("HELLO\r");
 Console.WriteLine($"Response: {response.Text}");
+
+// タイムアウトを明示的に指定
+var response2 = await client.SendAsync("HELLO\r", TimeSpan.FromSeconds(5));
+Console.WriteLine($"Response: {response2.Text}");
+
+// CancellationTokenを指定
+var response3 = await client.SendAsync("HELLO\r", TimeSpan.FromSeconds(5), cancellationToken);
+Console.WriteLine($"Response: {response3.Text}");
 ```
 
-**注意**: このメソッドを使用した場合、応答は`OnMessageReceived`イベントでは発行されません（キューイング方式）。
+**注意**: 
+- このメソッドを使用した場合、応答は`OnMessageReceived`イベントでは発行されません（キューイング方式）
+- メッセージは順次送信され、各メッセージの応答が来るまで次のメッセージは送信されません
+- タイムアウトが発生した場合、`TimeoutException`がスローされます
 
 ##### `Task<Message> SendAndWaitAsync(string text, Func<Message, bool> responsePredicate, TimeSpan timeout, CancellationToken cancellationToken = default)`
 
@@ -667,13 +674,15 @@ var response = await client.SendAndWaitAsync(
 ```csharp
 // Messageオブジェクトを使用（カスタムEncoding指定）
 var msg = Message.FromString("HELLO\r", System.Text.Encoding.UTF8);
-await client.SendAsync(msg);
 
-// 応答を待つ
-var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
+// 応答を待つ（タイムアウトはデフォルト値を使用）
+var response = await client.SendAsync(msg);
+
+// タイムアウトを明示的に指定
+var response2 = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
 
 // 条件付きで応答を待つ
-var response2 = await client.SendAndWaitAsync(
+var response3 = await client.SendAndWaitAsync(
     msg,
     m => m.Code == "OK",
     TimeSpan.FromSeconds(3)
@@ -1035,8 +1044,9 @@ client.OnMessageReceived += (sender, message) =>
 };
 await client.ConnectAsync();
 
-// メッセージを送信
-await client.SendAsync("HELLO\r");
+// メッセージを送信して応答を待つ
+var response = await client.SendAsync("HELLO\r");
+Console.WriteLine($"Response: {response.Text}");
 ```
 
 ### Promise的チェーン処理
@@ -1425,13 +1435,23 @@ server.OnError += (sender, args) =>
 ```csharp
 try
 {
+    // タイムアウトを明示的に指定
     var response = await client.SendAsync(msg, TimeSpan.FromSeconds(5));
     Console.WriteLine($"Response: {response.Text}");
+    
+    // または、デフォルトのタイムアウトを使用
+    var response2 = await client.SendAsync(msg);
+    Console.WriteLine($"Response: {response2.Text}");
 }
 catch (TimeoutException ex)
 {
     Console.WriteLine($"Timeout: {ex.Message}");
     // タイムアウト処理
+}
+catch (OperationCanceledException ex)
+{
+    Console.WriteLine($"Cancelled: {ex.Message}");
+    // キャンセル処理
 }
 catch (Exception ex)
 {
