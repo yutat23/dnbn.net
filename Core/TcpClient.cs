@@ -112,7 +112,7 @@ public class TcpClient : ITcpClient
 
     var encoding = GetEncoding(config.Encoding);
     // 受信時の終端文字を決定：ReceiveMessageTerminatorが設定されている場合はそれを使用、未設定の場合はMessageTerminatorを使用
-    string[]? receiveTerminators = config.ReceiveMessageTerminator ?? 
+    string[]? receiveTerminators = config.ReceiveMessageTerminator ??
         (config.MessageTerminator != null ? new[] { config.MessageTerminator } : null);
     _parser = new MessageParser(
         encoding,
@@ -250,13 +250,13 @@ public class TcpClient : ITcpClient
 
     // CancellationTokenSourceを先にキャンセル（これによりキープアライブタイマーのElapsedイベント内のチェックが機能する）
     _cancellationTokenSource.Cancel();
-    
+
     // キープアライブを停止（タイマーを確実に停止）
     StopKeepAlive();
-    
+
     // 送信キューを閉じる
     _sendQueueWriter.Complete();
-    
+
     // 送信ループの完了を待つ
     if (_sendLoopTask != null)
     {
@@ -273,7 +273,7 @@ public class TcpClient : ITcpClient
         _logger?.LogError(ex, "Error waiting for send loop to complete in client {Name}", Name);
       }
     }
-    
+
     await _transport.DisconnectAsync(cancellationToken);
 
     // 接続時刻をクリア（統計情報は保持）
@@ -685,11 +685,15 @@ public class TcpClient : ITcpClient
   }
 
   /// <summary>
-  /// メッセージを送信（応答を待たない）
+  /// メッセージをキューに追加して送信し、応答を待つ（HTTPクライアントのように）
+  /// 応答が来るまで次のメッセージは送信されない
+  /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="message">送信するメッセージ</param>
+  /// <param name="timeout">タイムアウト時間。指定しない場合はClientConfigのTimeoutMillisecondsを使用</param>
   /// <param name="cancellationToken">キャンセレーショントークン</param>
-  public async Task SendAsync(Message message, CancellationToken cancellationToken = default)
+  /// <returns>応答メッセージ</returns>
+  public async Task<Message> SendAsync(Message message, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
   {
     if (!IsConnected)
     {
@@ -698,27 +702,10 @@ public class TcpClient : ITcpClient
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    var request = new SendRequest
-    {
-      Message = message,
-      ResponseTcs = null, // 応答不要
-      EnqueuedAt = DateTime.UtcNow,
-      CancellationToken = cancellationToken
-    };
+    // タイムアウトが指定されていない場合は、デフォルト値を使用
+    var actualTimeout = timeout ?? TimeSpan.FromMilliseconds(_config.TimeoutMilliseconds);
 
-    await _sendQueueWriter.WriteAsync(request, cancellationToken);
-  }
-
-  /// <summary>
-  /// メッセージを送信して応答を待つ
-  /// </summary>
-  /// <param name="message">送信するメッセージ</param>
-  /// <param name="timeout">タイムアウト時間</param>
-  /// <param name="cancellationToken">キャンセレーショントークン</param>
-  /// <returns>受信した応答メッセージ</returns>
-  public async Task<Message> SendAsync(Message message, TimeSpan timeout, CancellationToken cancellationToken = default)
-  {
-    return await SendAndWaitAsync(message, _ => true, timeout, cancellationToken);
+    return await SendAndWaitAsync(message, _ => true, actualTimeout, cancellationToken);
   }
 
   /// <summary>
@@ -760,25 +747,15 @@ public class TcpClient : ITcpClient
   }
 
   /// <summary>
-  /// 文字列を送信する（設定のEncodingを使用）
+  /// 文字列を送信して応答を待つ（設定のEncodingを使用）
+  /// 応答が来るまで次のメッセージは送信されない
+  /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="text">送信する文字列</param>
+  /// <param name="timeout">タイムアウト時間。指定しない場合はClientConfigのTimeoutMillisecondsを使用</param>
   /// <param name="cancellationToken">キャンセレーショントークン</param>
-  public async Task SendAsync(string text, CancellationToken cancellationToken = default)
-  {
-    var encoding = GetEncoding(_config.Encoding);
-    var message = Message.FromString(text, encoding);
-    await SendAsync(message, cancellationToken);
-  }
-
-  /// <summary>
-  /// 文字列を送信して応答を待つ（簡易版：すべての応答を受け入れる、設定のEncodingを使用）
-  /// </summary>
-  /// <param name="text">送信する文字列</param>
-  /// <param name="timeout">タイムアウト時間</param>
-  /// <param name="cancellationToken">キャンセレーショントークン</param>
-  /// <returns>受信した応答メッセージ</returns>
-  public async Task<Message> SendAsync(string text, TimeSpan timeout, CancellationToken cancellationToken = default)
+  /// <returns>応答メッセージ</returns>
+  public async Task<Message> SendAsync(string text, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
   {
     var encoding = GetEncoding(_config.Encoding);
     var message = Message.FromString(text, encoding);
@@ -1014,7 +991,7 @@ public class TcpClient : ITcpClient
 
     var encoding = GetEncoding(_config.Encoding);
     var terminatorBytes = encoding.GetBytes(_config.MessageTerminator);
-    
+
     // 既に終端文字が含まれているかチェック（末尾に一致するか）
     if (message.RawData.Length >= terminatorBytes.Length)
     {

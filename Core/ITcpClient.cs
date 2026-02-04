@@ -64,19 +64,15 @@ public interface ITcpClient : IDisposable
   Task DisconnectAsync(bool isIntentional = true, CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// メッセージを送信する
+  /// メッセージをキューに追加して送信し、応答を待つ（HTTPクライアントのように）
+  /// 応答が来るまで次のメッセージは送信されない
+  /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="message">送信するメッセージ</param>
+  /// <param name="timeout">タイムアウト時間。指定しない場合はClientConfigのTimeoutMillisecondsを使用</param>
   /// <param name="cancellationToken">キャンセレーショントークン</param>
-  Task SendAsync(Message message, CancellationToken cancellationToken = default);
-
-  /// <summary>
-  /// メッセージを送信して応答を待つ（簡易版：すべての応答を受け入れる）
-  /// </summary>
-  /// <param name="message">送信するメッセージ</param>
-  /// <param name="timeout">タイムアウト時間</param>
-  /// <param name="cancellationToken">キャンセレーショントークン</param>
-  Task<Message> SendAsync(Message message, TimeSpan timeout, CancellationToken cancellationToken = default);
+  /// <returns>応答メッセージ</returns>
+  Task<Message> SendAsync(Message message, TimeSpan? timeout = null, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// メッセージを送信して応答を待つ
@@ -92,19 +88,15 @@ public interface ITcpClient : IDisposable
       CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// 文字列を送信する（設定のEncodingを使用）
+  /// 文字列を送信して応答を待つ（設定のEncodingを使用）
+  /// 応答が来るまで次のメッセージは送信されない
+  /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="text">送信する文字列</param>
+  /// <param name="timeout">タイムアウト時間。指定しない場合はClientConfigのTimeoutMillisecondsを使用</param>
   /// <param name="cancellationToken">キャンセレーショントークン</param>
-  Task SendAsync(string text, CancellationToken cancellationToken = default);
-
-  /// <summary>
-  /// 文字列を送信して応答を待つ（簡易版：すべての応答を受け入れる、設定のEncodingを使用）
-  /// </summary>
-  /// <param name="text">送信する文字列</param>
-  /// <param name="timeout">タイムアウト時間</param>
-  /// <param name="cancellationToken">キャンセレーショントークン</param>
-  Task<Message> SendAsync(string text, TimeSpan timeout, CancellationToken cancellationToken = default);
+  /// <returns>応答メッセージ</returns>
+  Task<Message> SendAsync(string text, TimeSpan? timeout = null, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// 文字列を送信して応答を待つ（設定のEncodingを使用）
