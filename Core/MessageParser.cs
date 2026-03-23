@@ -1,4 +1,5 @@
-using System.Linq;
+using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 using Dnbn.Models;
 
@@ -15,6 +16,7 @@ public class MessageParser
   private readonly int? _fixedBodyLength;
   private readonly int? _lengthFieldOffset;
   private readonly int? _lengthFieldLength;
+  private readonly int? _maxReceiveBufferBytes;
 
   private readonly List<byte> _buffer = new();
 
@@ -27,13 +29,15 @@ public class MessageParser
   /// <param name="fixedBodyLength">固定長ボディの長さ（オプション）</param>
   /// <param name="lengthFieldOffset">長さフィールドのオフセット（オプション）</param>
   /// <param name="lengthFieldLength">長さフィールドの長さ（オプション）</param>
+  /// <param name="maxReceiveBufferBytes">受信バッファの最大バイト数（オプション、未設定は無制限）</param>
   public MessageParser(
       Encoding encoding,
       string[]? messageTerminators = null,
       int? fixedHeaderLength = null,
       int? fixedBodyLength = null,
       int? lengthFieldOffset = null,
-      int? lengthFieldLength = null)
+      int? lengthFieldLength = null,
+      int? maxReceiveBufferBytes = null)
   {
     _encoding = encoding;
     _messageTerminators = messageTerminators;
@@ -41,6 +45,7 @@ public class MessageParser
     _fixedBodyLength = fixedBodyLength;
     _lengthFieldOffset = lengthFieldOffset;
     _lengthFieldLength = lengthFieldLength;
+    _maxReceiveBufferBytes = maxReceiveBufferBytes;
   }
 
   /// <summary>
@@ -49,6 +54,12 @@ public class MessageParser
   public List<Message> Parse(byte[] data)
   {
     _buffer.AddRange(data);
+    if (_maxReceiveBufferBytes.HasValue && _maxReceiveBufferBytes.Value > 0 && _buffer.Count > _maxReceiveBufferBytes.Value)
+    {
+      throw new InvalidOperationException(
+        $"Receive buffer exceeded maximum of {_maxReceiveBufferBytes.Value} bytes. " +
+        "Configure MessageTerminator or length-based protocol, or increase MaxReceiveBufferBytes.");
+    }
     var messages = new List<Message>();
 
     while (true)
@@ -101,8 +112,7 @@ public class MessageParser
       if (matchedTerminatorBytes != null && earliestIndex < int.MaxValue)
       {
         var messageLength = earliestIndex + matchedTerminatorBytes.Length;
-        messageData = _buffer.Take(messageLength).ToArray();
-        _buffer.RemoveRange(0, messageLength);
+        messageData = ExtractAndRemoveFromBuffer(messageLength);
       }
     }
     // 固定長ヘッダ + 固定長ボディ
@@ -111,38 +121,36 @@ public class MessageParser
       var totalLength = _fixedHeaderLength.Value + _fixedBodyLength.Value;
       if (_buffer.Count >= totalLength)
       {
-        messageData = _buffer.Take(totalLength).ToArray();
-        _buffer.RemoveRange(0, totalLength);
+        messageData = ExtractAndRemoveFromBuffer(totalLength);
       }
     }
     // 固定長ヘッダ + 可変長ボディ
     else if (_fixedHeaderLength.HasValue && _lengthFieldOffset.HasValue && _lengthFieldLength.HasValue)
     {
-      if (_buffer.Count >= _fixedHeaderLength.Value)
+      var headerLen = _fixedHeaderLength.Value;
+      if (_buffer.Count >= headerLen)
       {
-        var header = _buffer.Take(_fixedHeaderLength.Value).ToArray();
-        var bodyLength = ExtractLength(header, _lengthFieldOffset.Value, _lengthFieldLength.Value);
-        var totalLength = _fixedHeaderLength.Value + bodyLength;
+        var bodyLength = ExtractLengthFromSpan(CollectionsMarshal.AsSpan(_buffer).Slice(0, headerLen), _lengthFieldOffset.Value, _lengthFieldLength.Value);
+        var totalLength = headerLen + bodyLength;
 
         if (_buffer.Count >= totalLength)
         {
-          messageData = _buffer.Take(totalLength).ToArray();
-          _buffer.RemoveRange(0, totalLength);
+          messageData = ExtractAndRemoveFromBuffer(totalLength);
         }
       }
     }
     // 可変長ヘッダ + 可変長ボディ（長さフィールドが先頭にある場合）
     else if (_lengthFieldOffset.HasValue && _lengthFieldLength.HasValue)
     {
-      if (_buffer.Count >= _lengthFieldOffset.Value + _lengthFieldLength.Value)
+      var minLen = _lengthFieldOffset.Value + _lengthFieldLength.Value;
+      if (_buffer.Count >= minLen)
       {
-        var lengthBytes = _buffer.Skip(_lengthFieldOffset.Value).Take(_lengthFieldLength.Value).ToArray();
-        var totalLength = ExtractLengthFromBytes(lengthBytes);
+        var span = CollectionsMarshal.AsSpan(_buffer).Slice(_lengthFieldOffset.Value, _lengthFieldLength.Value);
+        var totalLength = ExtractLengthFromSpan(span);
 
         if (_buffer.Count >= totalLength)
         {
-          messageData = _buffer.Take(totalLength).ToArray();
-          _buffer.RemoveRange(0, totalLength);
+          messageData = ExtractAndRemoveFromBuffer(totalLength);
         }
       }
     }
@@ -183,13 +191,21 @@ public class MessageParser
     return -1;
   }
 
-  private int ExtractLength(byte[] header, int offset, int length)
+  private byte[] ExtractAndRemoveFromBuffer(int count)
   {
-    var lengthBytes = header.Skip(offset).Take(length).ToArray();
-    return ExtractLengthFromBytes(lengthBytes);
+    var result = new byte[count];
+    _buffer.CopyTo(0, result, 0, count);
+    _buffer.RemoveRange(0, count);
+    return result;
   }
 
-  private int ExtractLengthFromBytes(byte[] bytes)
+  private static int ExtractLengthFromSpan(ReadOnlySpan<byte> bytes, int offset, int length)
+  {
+    var slice = bytes.Slice(offset, length);
+    return ExtractLengthFromSpan(slice);
+  }
+
+  private static int ExtractLengthFromSpan(ReadOnlySpan<byte> bytes)
   {
     if (bytes.Length == 1)
     {
@@ -198,25 +214,11 @@ public class MessageParser
 
     if (bytes.Length == 2)
     {
-      // Big-endian想定（ネットワークバイトオーダー）
-      if (BitConverter.IsLittleEndian)
-      {
-        // バイト順序を反転
-        var reversed = new byte[] { bytes[1], bytes[0] };
-        return BitConverter.ToInt16(reversed, 0);
-      }
-      return BitConverter.ToInt16(bytes, 0);
+      return BinaryPrimitives.ReadInt16BigEndian(bytes);
     }
     if (bytes.Length == 4)
     {
-      // Big-endian想定（ネットワークバイトオーダー）
-      if (BitConverter.IsLittleEndian)
-      {
-        // バイト順序を反転
-        var reversed = new byte[] { bytes[3], bytes[2], bytes[1], bytes[0] };
-        return BitConverter.ToInt32(reversed, 0);
-      }
-      return BitConverter.ToInt32(bytes, 0);
+      return BinaryPrimitives.ReadInt32BigEndian(bytes);
     }
     throw new ArgumentException($"Unsupported length field size: {bytes.Length}");
   }

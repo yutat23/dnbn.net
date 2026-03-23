@@ -75,6 +75,13 @@ public class ServerConfig
   /// メッセージ送受信時のログ出力を有効にするかどうか
   /// </summary>
   public bool EnableMessageLogging { get; set; } = false;
+
+  /// <summary>
+  /// 受信バッファの最大バイト数（未設定または0以下は無制限）。
+  /// 終端文字・長さフィールドが未設定のプロトコルではバッファが無制限に伸びるリスクがあるため、
+  /// 任意で上限を設定することでメモリ枯渇を防げる。
+  /// </summary>
+  public int? MaxReceiveBufferBytes { get; set; }
 }
 
 

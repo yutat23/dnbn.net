@@ -442,7 +442,8 @@ public class TcpServer : ITcpServer
           config.FixedHeaderLength,
           config.FixedBodyLength,
           config.LengthFieldOffset,
-          config.LengthFieldLength);
+          config.LengthFieldLength,
+          config.MaxReceiveBufferBytes);
 
       _stream = _tcpClient.GetStream();
     }
