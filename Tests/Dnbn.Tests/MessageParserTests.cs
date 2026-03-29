@@ -157,7 +157,7 @@ public class MessageParserTests
   [Fact]
   public void Parse_MaxReceiveBufferBytes_ThrowsWhenExceeded()
   {
-    var parser = new MessageParser(Utf8, maxReceiveBufferBytes: 5);
+    var parser = new MessageParser(Utf8, null, null, null, null, null, 5);
     parser.Parse(Utf8.GetBytes("ABCD")); // 4 bytes, OK
 
     var ex = Assert.Throws<InvalidOperationException>(() => parser.Parse(Utf8.GetBytes("EF")));
@@ -168,7 +168,7 @@ public class MessageParserTests
   [Fact]
   public void Parse_MaxReceiveBufferBytes_UnlimitedWhenNull()
   {
-    var parser = new MessageParser(Utf8, maxReceiveBufferBytes: null);
+    var parser = new MessageParser(Utf8, null, null, null, null, null, null);
     var data = Utf8.GetBytes(new string('X', 10000));
     var messages = parser.Parse(data);
     Assert.Empty(messages);

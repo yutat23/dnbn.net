@@ -21,7 +21,7 @@ public class MessageParser
   private readonly List<byte> _buffer = new();
 
   /// <summary>
-  /// コンストラクタ
+  /// コンストラクタ（後方互換）
   /// </summary>
   /// <param name="encoding">文字エンコーディング</param>
   /// <param name="messageTerminators">メッセージ終端文字の配列（オプション、複数の候補をサポート）</param>
@@ -29,15 +29,35 @@ public class MessageParser
   /// <param name="fixedBodyLength">固定長ボディの長さ（オプション）</param>
   /// <param name="lengthFieldOffset">長さフィールドのオフセット（オプション）</param>
   /// <param name="lengthFieldLength">長さフィールドの長さ（オプション）</param>
-  /// <param name="maxReceiveBufferBytes">受信バッファの最大バイト数（オプション、未設定は無制限）</param>
   public MessageParser(
       Encoding encoding,
       string[]? messageTerminators = null,
       int? fixedHeaderLength = null,
       int? fixedBodyLength = null,
       int? lengthFieldOffset = null,
-      int? lengthFieldLength = null,
-      int? maxReceiveBufferBytes = null)
+      int? lengthFieldLength = null)
+      : this(encoding, messageTerminators, fixedHeaderLength, fixedBodyLength, lengthFieldOffset, lengthFieldLength, null)
+  {
+  }
+
+  /// <summary>
+  /// コンストラクタ（受信バッファ上限付き）
+  /// </summary>
+  /// <param name="encoding">文字エンコーディング</param>
+  /// <param name="messageTerminators">メッセージ終端文字の配列（オプション、複数の候補をサポート）</param>
+  /// <param name="fixedHeaderLength">固定長ヘッダーの長さ（オプション）</param>
+  /// <param name="fixedBodyLength">固定長ボディの長さ（オプション）</param>
+  /// <param name="lengthFieldOffset">長さフィールドのオフセット（オプション）</param>
+  /// <param name="lengthFieldLength">長さフィールドの長さ（オプション）</param>
+  /// <param name="maxReceiveBufferBytes">受信バッファの最大バイト数（未設定は無制限）</param>
+  public MessageParser(
+      Encoding encoding,
+      string[]? messageTerminators,
+      int? fixedHeaderLength,
+      int? fixedBodyLength,
+      int? lengthFieldOffset,
+      int? lengthFieldLength,
+      int? maxReceiveBufferBytes)
   {
     _encoding = encoding;
     _messageTerminators = messageTerminators;
@@ -214,11 +234,11 @@ public class MessageParser
 
     if (bytes.Length == 2)
     {
-      return BinaryPrimitives.ReadInt16BigEndian(bytes);
+      return BinaryPrimitives.ReadUInt16BigEndian(bytes);
     }
     if (bytes.Length == 4)
     {
-      return BinaryPrimitives.ReadInt32BigEndian(bytes);
+      return (int)BinaryPrimitives.ReadUInt32BigEndian(bytes);
     }
     throw new ArgumentException($"Unsupported length field size: {bytes.Length}");
   }

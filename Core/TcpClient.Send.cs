@@ -16,8 +16,8 @@ partial class TcpClient
       {
         try
         {
-          // 応答待ちのリクエストの場合は、リストに追加
-          if (request.ResponseTcs != null)
+          // 応答待ちのリクエストの場合は、リストに追加（タイムアウト済みはスキップ）
+          if (request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
           {
             lock (_pendingResponseRequestsLock)
             {

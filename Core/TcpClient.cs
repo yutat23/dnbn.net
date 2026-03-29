@@ -258,8 +258,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     // キープアライブを停止（タイマーを確実に停止）
     StopKeepAlive();
 
-    // 送信キューを閉じる
-    _sendQueueWriter.Complete();
+    // 送信キューを閉じる（既に閉じている場合は無視）
+    _sendQueueWriter.TryComplete();
 
     // 送信ループの完了を待つ
     if (_sendLoopTask != null)

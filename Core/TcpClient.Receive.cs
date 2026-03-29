@@ -65,15 +65,19 @@ partial class TcpClient
           {
             lock (_pendingResponseRequestsLock)
             {
-              // タイムアウトしたリクエストを削除（O(1) ノード削除）
+              // 完了済み・タイムアウトしたリクエストを削除（O(1) ノード削除）
               var now = DateTime.UtcNow;
               var node = _pendingResponseRequests.First;
               while (node != null)
               {
                 var next = node.Next;
                 var req = node.Value;
-                var elapsed = now - req.EnqueuedAt;
-                if (elapsed >= req.Timeout && req.ResponseTcs != null && !req.ResponseTcs.Task.IsCompleted)
+                if (req.ResponseTcs != null && req.ResponseTcs.Task.IsCompleted)
+                {
+                  // 完了済み（キャンセル等）はそのまま除去
+                  _pendingResponseRequests.Remove(node);
+                }
+                else if (req.ResponseTcs != null && now - req.EnqueuedAt >= req.Timeout)
                 {
                   _pendingResponseRequests.Remove(node);
                   req.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds"));
