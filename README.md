@@ -238,6 +238,7 @@ Console.WriteLine($"Response: {response2.Text}");
 | `LengthFieldOffset` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドの位置（バイト）。可変長プロトコルで使用 |
 | `LengthFieldLength` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドのサイズ（バイト）。1, 2, 4バイトをサポート |
 | `EnableMessageLogging` | `bool` | - | `false` | メッセージ送受信時のログ出力を有効にするかどうか。`true`に設定すると、DEBUGレベルでメッセージの送受信がログ出力されます |
+| `MaxReceiveBufferBytes` | `int?` | - | `null` | 受信バッファの最大バイト数。未設定・0以下は無制限。終端文字・長さフィールドを未設定のプロトコルではバッファが伸び続けるリスクがあるため、任意で上限を設定可能 |
 
 **設定例**:
 
@@ -274,6 +275,7 @@ Console.WriteLine($"Response: {response2.Text}");
 | `LengthFieldOffset` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドの位置（バイト）。可変長プロトコルで使用 |
 | `LengthFieldLength` | `int?` | - | `null` | 可変長ボディの場合のヘッダ内長さフィールドのサイズ（バイト）。1, 2, 4バイトをサポート |
 | `EnableMessageLogging` | `bool` | - | `false` | メッセージ送受信時のログ出力を有効にするかどうか。`true`に設定すると、DEBUGレベルでメッセージの送受信がログ出力されます |
+| `MaxReceiveBufferBytes` | `int?` | - | `null` | 受信バッファの最大バイト数。未設定・0以下は無制限。終端文字・長さフィールドを未設定のプロトコルではバッファが伸び続けるリスクがあるため、任意で上限を設定可能 |
 
 **設定例**:
 
@@ -572,6 +574,8 @@ TCP Messengerの状態をWebブラウザで表示するための設定です。`
 | 終端文字 | テキストベースのプロトコル、シンプルな通信 | 設定が簡単、可変長対応 | バイナリデータに不向き |
 | 固定長 | 固定長の電文プロトコル | パースが高速、シンプル | 可変長データに対応不可 |
 | 可変長 | 効率的な可変長データ転送が必要 | 柔軟性が高い、効率的 | 設定がやや複雑 |
+
+**注意**: 終端文字・長さフィールドのいずれも設定しない場合、受信バッファはメッセージ区切りが検出されるまで伸び続け、メモリ枯渇の原因となり得ます。プロトコルが未確定の開発段階では、`MaxReceiveBufferBytes`で上限を設定することを推奨します。
 
 ## APIリファレンス
 
@@ -1069,7 +1073,7 @@ await client
 
 ### Observableパターン
 
-Reactive Extensionsを使用したメッセージ処理です。
+Reactive Extensionsを使用したメッセージ処理です。`MessageReceived`（IObservable）と`OnMessageReceived`（イベント）は同一のメッセージを両方に配信します。両方に購読すると同一メッセージが二重に処理されるため、どちらか一方を使うことを推奨します。
 
 ```csharp
 using System.Reactive.Linq;

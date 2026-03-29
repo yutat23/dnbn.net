@@ -5,7 +5,7 @@ namespace Dnbn.Core;
 /// <summary>
 /// TCPトランスポート実装
 /// </summary>
-public class TcpTransport : ITransport, IDisposable
+public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
 {
   private System.Net.Sockets.TcpClient? _tcpClient;
   private NetworkStream? _stream;
@@ -101,7 +101,15 @@ public class TcpTransport : ITransport, IDisposable
   }
 
   /// <summary>
-  /// リソースを解放
+  /// リソースを非同期に解放
+  /// </summary>
+  public async ValueTask DisposeAsync()
+  {
+    await DisconnectAsync().ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// リソースを解放（互換性維持のため残存。可能であれば DisposeAsync を使用してください）
   /// </summary>
   public void Dispose()
   {
