@@ -16,12 +16,12 @@ partial class TcpClient
       {
         try
         {
-          // 応答待ちのリクエストの場合は、キューに追加
+          // 応答待ちのリクエストの場合は、リストに追加
           if (request.ResponseTcs != null)
           {
             lock (_pendingResponseRequestsLock)
             {
-              _pendingResponseRequests.Enqueue(request);
+              _pendingResponseRequests.AddLast(request);
             }
           }
 
@@ -37,11 +37,11 @@ partial class TcpClient
           _logger?.LogDebug("TCP Client '{Name}' sending message: {MessageText}", Name, filteredMessage.Text?.Trim());
 
           // MessageTerminatorを自動的に追加
-          var dataToSend = AppendMessageTerminatorIfNeeded(filteredMessage);
+          var dataToSend = TcpMessageUtils.AppendMessageTerminatorIfNeeded(filteredMessage, _config.MessageTerminator, _config.Encoding);
           await _transport.SendAsync(dataToSend, request.CancellationToken);
 
           // 統計情報を更新
-          Interlocked.Increment(ref _messagesSent);
+          Interlocked.Increment(ref _stats.MessagesSent);
         }
         catch (OperationCanceledException)
         {
@@ -50,20 +50,7 @@ partial class TcpClient
           {
             lock (_pendingResponseRequestsLock)
             {
-              // キューから削除
-              var tempQueue = new Queue<SendRequest>();
-              while (_pendingResponseRequests.Count > 0)
-              {
-                var item = _pendingResponseRequests.Dequeue();
-                if (item != request)
-                {
-                  tempQueue.Enqueue(item);
-                }
-              }
-              while (tempQueue.Count > 0)
-              {
-                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
-              }
+              _pendingResponseRequests.Remove(request);
             }
             request.ResponseTcs.TrySetCanceled();
           }
@@ -75,20 +62,7 @@ partial class TcpClient
           {
             lock (_pendingResponseRequestsLock)
             {
-              // キューから削除
-              var tempQueue = new Queue<SendRequest>();
-              while (_pendingResponseRequests.Count > 0)
-              {
-                var item = _pendingResponseRequests.Dequeue();
-                if (item != request)
-                {
-                  tempQueue.Enqueue(item);
-                }
-              }
-              while (tempQueue.Count > 0)
-              {
-                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
-              }
+              _pendingResponseRequests.Remove(request);
             }
             request.ResponseTcs.TrySetException(ex);
           }

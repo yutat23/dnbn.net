@@ -99,6 +99,14 @@ public interface ITcpClient : IDisposable
   Task<Message> SendAsync(string text, TimeSpan? timeout = null, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// 文字列を送信して応答を待つ（後方互換性のためのオーバーロード）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <returns>応答メッセージ</returns>
+  Task<Message> SendAsync(string text, CancellationToken cancellationToken);
+
+  /// <summary>
   /// 文字列を送信して応答を待つ（設定のEncodingを使用）
   /// </summary>
   /// <param name="text">送信する文字列</param>

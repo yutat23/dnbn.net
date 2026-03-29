@@ -40,10 +40,10 @@ partial class TcpClient
           _logger?.LogDebug("TCP Client '{Name}' received message: {MessageText}", Name, filteredMessage.Text?.Trim());
 
           // 統計情報を更新
-          Interlocked.Increment(ref _messagesReceived);
+          Interlocked.Increment(ref _stats.MessagesReceived);
           lock (_statsLock)
           {
-            _lastMessageReceivedAt = DateTime.UtcNow;
+            _stats.LastMessageReceivedAt = DateTime.UtcNow;
           }
 
           // キープアライブ応答をチェック（優先的に処理）
@@ -54,7 +54,7 @@ partial class TcpClient
             keepAliveTcs.TrySetResult(filteredMessage);
             lock (_statsLock)
             {
-              _lastKeepAliveResponseReceivedAt = DateTime.UtcNow;
+              _stats.LastKeepAliveResponseReceivedAt = DateTime.UtcNow;
             }
             OnKeepAliveResponseReceived?.Invoke(this, filteredMessage);
             handled = true;
@@ -65,51 +65,39 @@ partial class TcpClient
           {
             lock (_pendingResponseRequestsLock)
             {
-              // タイムアウトしたリクエストを削除
+              // タイムアウトしたリクエストを削除（O(1) ノード削除）
               var now = DateTime.UtcNow;
-              var tempQueue = new Queue<SendRequest>();
-              while (_pendingResponseRequests.Count > 0)
+              var node = _pendingResponseRequests.First;
+              while (node != null)
               {
-                var request = _pendingResponseRequests.Dequeue();
-                var elapsed = now - request.EnqueuedAt;
-                if (elapsed >= request.Timeout && request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
+                var next = node.Next;
+                var req = node.Value;
+                var elapsed = now - req.EnqueuedAt;
+                if (elapsed >= req.Timeout && req.ResponseTcs != null && !req.ResponseTcs.Task.IsCompleted)
                 {
-                  // タイムアウト
-                  request.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {request.Timeout.TotalSeconds} seconds"));
-                  continue;
+                  _pendingResponseRequests.Remove(node);
+                  req.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds"));
                 }
-                tempQueue.Enqueue(request);
-              }
-              while (tempQueue.Count > 0)
-              {
-                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
+                node = next;
               }
 
-              // FIFO順序で応答をマッチング
-              tempQueue = new Queue<SendRequest>();
-              while (_pendingResponseRequests.Count > 0)
+              // FIFO順序で応答をマッチング（O(1) ノード削除）
+              node = _pendingResponseRequests.First;
+              while (node != null)
               {
-                var request = _pendingResponseRequests.Dequeue();
-                if (request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
+                var next = node.Next;
+                var req = node.Value;
+                if (req.ResponseTcs != null && !req.ResponseTcs.Task.IsCompleted)
                 {
-                  // responsePredicateで応答を判定
-                  if (request.ResponsePredicate == null || request.ResponsePredicate(filteredMessage))
+                  if (req.ResponsePredicate == null || req.ResponsePredicate(filteredMessage))
                   {
-                    request.ResponseTcs.TrySetResult(filteredMessage);
+                    _pendingResponseRequests.Remove(node);
+                    req.ResponseTcs.TrySetResult(filteredMessage);
                     handled = true;
                     break;
                   }
-                  else
-                  {
-                    // 条件を満たさない場合はキューに戻す
-                    tempQueue.Enqueue(request);
-                  }
                 }
-              }
-              // 残りのリクエストをキューに戻す
-              while (tempQueue.Count > 0)
-              {
-                _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
+                node = next;
               }
             }
           }
@@ -133,11 +121,11 @@ partial class TcpClient
         if (!_cancellationTokenSource.Token.IsCancellationRequested)
         {
           // エラー統計を更新
-          Interlocked.Increment(ref _errorCount);
+          Interlocked.Increment(ref _stats.ErrorCount);
           lock (_statsLock)
           {
-            _lastError = ex.Message;
-            _lastErrorAt = DateTime.UtcNow;
+            _stats.LastError = ex.Message;
+            _stats.LastErrorAt = DateTime.UtcNow;
           }
           _logger?.LogError(ex, "Error receiving data in client {Name}", Name);
           OnError?.Invoke(this, ex);

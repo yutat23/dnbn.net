@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using System.Reactive.Subjects;
-using System.Text;
-using System.Timers;
 using Dnbn.Configuration;
 using Dnbn.Filters;
 using Dnbn.Models;
@@ -13,7 +11,7 @@ namespace Dnbn.Core;
 /// <summary>
 /// TCPクライアント実装
 /// </summary>
-public partial class TcpClient : ITcpClient
+public partial class TcpClient : ITcpClient, IAsyncDisposable
 {
   private ClientConfig _config;
   private readonly ILogger<TcpClient>? _logger;
@@ -25,9 +23,9 @@ public partial class TcpClient : ITcpClient
   private ChannelWriter<SendRequest> _sendQueueWriter = null!;
   private ChannelReader<SendRequest> _sendQueueReader = null!;
   private Task? _sendLoopTask;
-  private readonly Queue<SendRequest> _pendingResponseRequests = new();
+  private readonly LinkedList<SendRequest> _pendingResponseRequests = new();
   private readonly object _pendingResponseRequestsLock = new();
-  private System.Timers.Timer? _keepAliveTimer;
+  private CancellationTokenSource? _keepAliveTimerCts;
   private CancellationTokenSource _cancellationTokenSource = new();
   private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
@@ -37,20 +35,25 @@ public partial class TcpClient : ITcpClient
   private readonly object _reconnectLock = new();
   private readonly object _configLock = new();
 
-  // 統計情報追跡用フィールド
-  private DateTime? _connectedAt;
-  private DateTime? _lastMessageReceivedAt;
-  private long _messagesSent = 0;
-  private long _messagesReceived = 0;
-  private DateTime? _lastKeepAliveSentAt;
-  private DateTime? _lastKeepAliveResponseReceivedAt;
-  private int _keepAliveTimeoutCount = 0;
-  private int _errorCount = 0;
-  private string? _lastError;
-  private DateTime? _lastErrorAt;
-  private int _connectionRetryAttempts = 0;
-  private DateTime? _lastRetryAttemptAt;
+  // 統計情報
+  private readonly ClientStats _stats = new();
   private readonly object _statsLock = new();
+
+  private sealed class ClientStats
+  {
+    public DateTime? ConnectedAt;
+    public DateTime? LastMessageReceivedAt;
+    public long MessagesSent;
+    public long MessagesReceived;
+    public DateTime? LastKeepAliveSentAt;
+    public DateTime? LastKeepAliveResponseReceivedAt;
+    public int KeepAliveTimeoutCount;
+    public int ErrorCount;
+    public string? LastError;
+    public DateTime? LastErrorAt;
+    public int ConnectionRetryAttempts;
+    public DateTime? LastRetryAttemptAt;
+  }
 
   /// <summary>
   /// クライアント名
@@ -110,7 +113,7 @@ public partial class TcpClient : ITcpClient
     _logger = logger;
     _filters = filters?.ToList() ?? new List<IMessageFilter>();
 
-    var encoding = GetEncoding(config.Encoding);
+    var encoding = TcpMessageUtils.GetEncoding(config.Encoding);
     // 受信時の終端文字を決定：ReceiveMessageTerminatorが設定されている場合はそれを使用、未設定の場合はMessageTerminatorを使用
     string[]? receiveTerminators = config.ReceiveMessageTerminator ??
         (config.MessageTerminator != null ? new[] { config.MessageTerminator } : null);
@@ -179,8 +182,8 @@ public partial class TcpClient : ITcpClient
             await _transport.ConnectAsync(linkedCts.Token);
             lock (_statsLock)
             {
-              _connectedAt = DateTime.UtcNow;
-              _connectionRetryAttempts = 0; // 接続成功時にリセット
+              _stats.ConnectedAt = DateTime.UtcNow;
+              _stats.ConnectionRetryAttempts = 0; // 接続成功時にリセット
             }
             _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
@@ -208,8 +211,8 @@ public partial class TcpClient : ITcpClient
       await _transport.ConnectAsync(linkedCts.Token);
       lock (_statsLock)
       {
-        _connectedAt = DateTime.UtcNow;
-        _connectionRetryAttempts = 0; // 接続成功時にリセット
+        _stats.ConnectedAt = DateTime.UtcNow;
+        _stats.ConnectionRetryAttempts = 0; // 接続成功時にリセット
       }
       _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
@@ -280,20 +283,20 @@ public partial class TcpClient : ITcpClient
     // 接続時刻をクリア（統計情報は保持）
     lock (_statsLock)
     {
-      _connectedAt = null;
+      _stats.ConnectedAt = null;
     }
 
     // 待機中のリクエストをキャンセル
     lock (_pendingResponseRequestsLock)
     {
-      while (_pendingResponseRequests.Count > 0)
+      foreach (var request in _pendingResponseRequests)
       {
-        var request = _pendingResponseRequests.Dequeue();
         if (request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
         {
           request.ResponseTcs.TrySetCanceled();
         }
       }
+      _pendingResponseRequests.Clear();
     }
 
     if (isIntentional)
@@ -380,10 +383,14 @@ public partial class TcpClient : ITcpClient
   /// <returns>応答メッセージ</returns>
   public async Task<Message> SendAsync(string text, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
   {
-    var encoding = GetEncoding(_config.Encoding);
+    var encoding = TcpMessageUtils.GetEncoding(_config.Encoding);
     var message = Message.FromString(text, encoding);
     return await SendAsync(message, timeout, cancellationToken);
   }
+
+  /// <summary>後方互換性のためのオーバーロード</summary>
+  public Task<Message> SendAsync(string text, CancellationToken cancellationToken)
+      => SendAsync(text, (TimeSpan?)null, cancellationToken);
 
   /// <summary>
   /// 文字列を送信して応答を待つ（設定のEncodingを使用）
@@ -399,7 +406,7 @@ public partial class TcpClient : ITcpClient
       TimeSpan timeout,
       CancellationToken cancellationToken = default)
   {
-    var encoding = GetEncoding(_config.Encoding);
+    var encoding = TcpMessageUtils.GetEncoding(_config.Encoding);
     var message = Message.FromString(text, encoding);
     return await SendAndWaitAsync(message, responsePredicate, timeout, cancellationToken);
   }
@@ -430,19 +437,7 @@ public partial class TcpClient : ITcpClient
         // キューから削除
         lock (_pendingResponseRequestsLock)
         {
-          var tempQueue = new Queue<SendRequest>();
-          while (_pendingResponseRequests.Count > 0)
-          {
-            var item = _pendingResponseRequests.Dequeue();
-            if (item != request)
-            {
-              tempQueue.Enqueue(item);
-            }
-          }
-          while (tempQueue.Count > 0)
-          {
-            _pendingResponseRequests.Enqueue(tempQueue.Dequeue());
-          }
+          _pendingResponseRequests.Remove(request);
         }
         tcs.TrySetException(new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds"));
       }
@@ -459,59 +454,16 @@ public partial class TcpClient : ITcpClient
     catch (TimeoutException ex)
     {
       // タイムアウトエラーを統計に記録
-      Interlocked.Increment(ref _errorCount);
+      Interlocked.Increment(ref _stats.ErrorCount);
       lock (_statsLock)
       {
-        _lastError = ex.Message;
-        _lastErrorAt = DateTime.UtcNow;
+        _stats.LastError = ex.Message;
+        _stats.LastErrorAt = DateTime.UtcNow;
       }
       _logger?.LogWarning("Request timeout for client {Name}: {Message}", Name, ex.Message);
       OnError?.Invoke(this, ex);
       throw;
     }
-  }
-
-  /// <summary>
-  /// MessageTerminatorが設定されている場合、メッセージに自動的に追加する
-  /// </summary>
-  private byte[] AppendMessageTerminatorIfNeeded(Message message)
-  {
-    if (string.IsNullOrEmpty(_config.MessageTerminator))
-    {
-      return message.RawData;
-    }
-
-    var encoding = GetEncoding(_config.Encoding);
-    var terminatorBytes = encoding.GetBytes(_config.MessageTerminator);
-
-    // 既に終端文字が含まれているかチェック（末尾に一致するか）
-    if (message.RawData.Length >= terminatorBytes.Length)
-    {
-      var suffix = new byte[terminatorBytes.Length];
-      Array.Copy(message.RawData, message.RawData.Length - terminatorBytes.Length, suffix, 0, terminatorBytes.Length);
-      if (suffix.SequenceEqual(terminatorBytes))
-      {
-        // 既に終端文字が含まれている場合は追加しない
-        return message.RawData;
-      }
-    }
-
-    // 終端文字を追加
-    var result = new byte[message.RawData.Length + terminatorBytes.Length];
-    Array.Copy(message.RawData, 0, result, 0, message.RawData.Length);
-    Array.Copy(terminatorBytes, 0, result, message.RawData.Length, terminatorBytes.Length);
-    return result;
-  }
-
-  private Encoding GetEncoding(string encodingName)
-  {
-    return encodingName.ToUpperInvariant() switch
-    {
-      "UTF-8" => Encoding.UTF8,
-      "SHIFT-JIS" or "SHIFTJIS" => Encoding.GetEncoding("shift_jis"),
-      "ASCII" => Encoding.ASCII,
-      _ => Encoding.UTF8
-    };
   }
 
   /// <summary>
@@ -546,10 +498,7 @@ public partial class TcpClient : ITcpClient
 
         if (IsConnected)
         {
-          _keepAliveTimer?.Stop();
-          _keepAliveTimer?.Dispose();
-          _keepAliveTimer = null;
-
+          StopKeepAlive();
           if (_config.KeepAlive?.Enabled == true)
           {
             StartKeepAlive();
@@ -694,51 +643,81 @@ public partial class TcpClient : ITcpClient
   {
     get
     {
+      // 各ロックを独立して取得（ネスト禁止→デッドロックリスク排除）
+      bool isReconnecting;
+      lock (_reconnectLock)
+      {
+        isReconnecting = _reconnectTask != null && !_reconnectTask.IsCompleted;
+      }
+
+      int pendingRequestsCount;
+      lock (_pendingResponseRequestsLock)
+      {
+        pendingRequestsCount = _pendingResponseRequests.Count;
+      }
+
+      DateTime? connectedAt, lastMessageReceivedAt, lastKeepAliveSentAt,
+                lastKeepAliveResponseReceivedAt, lastErrorAt, lastRetryAttemptAt;
+      string? lastError;
       lock (_statsLock)
       {
-        var isReconnecting = false;
-        lock (_reconnectLock)
-        {
-          isReconnecting = _reconnectTask != null && !_reconnectTask.IsCompleted;
-        }
-
-        var connectionDuration = _connectedAt.HasValue
-          ? DateTime.UtcNow - _connectedAt.Value
-          : (TimeSpan?)null;
-
-        int pendingRequestsCount;
-        lock (_pendingResponseRequestsLock)
-        {
-          pendingRequestsCount = _pendingResponseRequests.Count;
-        }
-
-        return new ClientConnectionInfo
-        {
-          IsConnected = IsConnected,
-          ConnectedAt = _connectedAt,
-          LastMessageReceivedAt = _lastMessageReceivedAt,
-          RemoteHost = _config.RemoteHost,
-          RemotePort = _config.RemotePort,
-          IsReconnecting = isReconnecting,
-          ConnectionDuration = connectionDuration,
-          MessagesSent = Interlocked.Read(ref _messagesSent),
-          MessagesReceived = Interlocked.Read(ref _messagesReceived),
-          PendingRequests = pendingRequestsCount,
-          LastKeepAliveSentAt = _lastKeepAliveSentAt,
-          LastKeepAliveResponseReceivedAt = _lastKeepAliveResponseReceivedAt,
-          KeepAliveTimeoutCount = Interlocked.CompareExchange(ref _keepAliveTimeoutCount, 0, 0),
-          ErrorCount = Interlocked.CompareExchange(ref _errorCount, 0, 0),
-          LastError = _lastError,
-          LastErrorAt = _lastErrorAt,
-          ConnectionRetryAttempts = Interlocked.CompareExchange(ref _connectionRetryAttempts, 0, 0),
-          LastRetryAttemptAt = _lastRetryAttemptAt
-        };
+        connectedAt                       = _stats.ConnectedAt;
+        lastMessageReceivedAt             = _stats.LastMessageReceivedAt;
+        lastKeepAliveSentAt               = _stats.LastKeepAliveSentAt;
+        lastKeepAliveResponseReceivedAt   = _stats.LastKeepAliveResponseReceivedAt;
+        lastError                         = _stats.LastError;
+        lastErrorAt                       = _stats.LastErrorAt;
+        lastRetryAttemptAt                = _stats.LastRetryAttemptAt;
       }
+
+      // ロック解放後に組み立て
+      var connectionDuration = connectedAt.HasValue
+        ? DateTime.UtcNow - connectedAt.Value
+        : (TimeSpan?)null;
+
+      return new ClientConnectionInfo
+      {
+        IsConnected = IsConnected,
+        ConnectedAt = connectedAt,
+        LastMessageReceivedAt = lastMessageReceivedAt,
+        RemoteHost = _config.RemoteHost,
+        RemotePort = _config.RemotePort,
+        IsReconnecting = isReconnecting,
+        ConnectionDuration = connectionDuration,
+        MessagesSent = Interlocked.Read(ref _stats.MessagesSent),
+        MessagesReceived = Interlocked.Read(ref _stats.MessagesReceived),
+        PendingRequests = pendingRequestsCount,
+        LastKeepAliveSentAt = lastKeepAliveSentAt,
+        LastKeepAliveResponseReceivedAt = lastKeepAliveResponseReceivedAt,
+        KeepAliveTimeoutCount = Interlocked.CompareExchange(ref _stats.KeepAliveTimeoutCount, 0, 0),
+        ErrorCount = Interlocked.CompareExchange(ref _stats.ErrorCount, 0, 0),
+        LastError = lastError,
+        LastErrorAt = lastErrorAt,
+        ConnectionRetryAttempts = Interlocked.CompareExchange(ref _stats.ConnectionRetryAttempts, 0, 0),
+        LastRetryAttemptAt = lastRetryAttemptAt
+      };
     }
   }
 
   /// <summary>
-  /// リソースを解放
+  /// リソースを非同期に解放
+  /// </summary>
+  public async ValueTask DisposeAsync()
+  {
+    if (_disposed)
+    {
+      return;
+    }
+    await DisconnectAsync().ConfigureAwait(false);
+    _externalCancellationTokenRegistration?.Dispose();
+    _cancellationTokenSource.Dispose();
+    _messageReceivedSubject.Dispose();
+    StopKeepAlive();
+    _disposed = true;
+  }
+
+  /// <summary>
+  /// リソースを解放（互換性維持のため残存。可能であれば DisposeAsync を使用してください）
   /// </summary>
   public void Dispose()
   {
@@ -746,7 +725,6 @@ public partial class TcpClient : ITcpClient
     {
       return;
     }
-
     // ConfigureAwait(false)を使用してデッドロックを回避
     DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
     _externalCancellationTokenRegistration?.Dispose();
@@ -766,17 +744,5 @@ public partial class TcpClient : ITcpClient
     public CancellationToken CancellationToken { get; set; }
   }
 
-  private class MessageContext : IMessageContext
-  {
-    public SessionInfo? SessionInfo { get; }
-    public bool IsServerSide { get; }
-    public Dictionary<string, object> Properties { get; } = new();
-
-    public MessageContext(SessionInfo? sessionInfo, bool isServerSide)
-    {
-      SessionInfo = sessionInfo;
-      IsServerSide = isServerSide;
-    }
-  }
 }
 

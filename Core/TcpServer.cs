@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Reactive.Subjects;
-using System.Text;
 using Dnbn.Configuration;
 using Dnbn.Filters;
 using Dnbn.Models;
@@ -13,7 +12,7 @@ namespace Dnbn.Core;
 /// <summary>
 /// TCPサーバー実装
 /// </summary>
-public class TcpServer : ITcpServer
+public class TcpServer : ITcpServer, IAsyncDisposable
 {
   private readonly ServerConfig _config;
   private readonly ILogger<TcpServer>? _logger;
@@ -138,6 +137,7 @@ public class TcpServer : ITcpServer
 
     _cancellationTokenSource.Cancel();
     _listener?.Stop();
+    _listener = null;
 
     // 全セッションを切断
     var sessions = _sessions.Values.ToList();
@@ -295,7 +295,7 @@ public class TcpServer : ITcpServer
   /// <param name="cancellationToken">キャンセレーショントークン</param>
   public async Task SendAsync(string sessionId, string text, CancellationToken cancellationToken = default)
   {
-    var encoding = GetEncoding(_config.Encoding);
+    var encoding = TcpMessageUtils.GetEncoding(_config.Encoding);
     var message = Message.FromString(text, encoding);
     await SendAsync(sessionId, message, cancellationToken);
   }
@@ -307,7 +307,7 @@ public class TcpServer : ITcpServer
   /// <param name="cancellationToken">キャンセレーショントークン</param>
   public async Task BroadcastAsync(string text, CancellationToken cancellationToken = default)
   {
-    var encoding = GetEncoding(_config.Encoding);
+    var encoding = TcpMessageUtils.GetEncoding(_config.Encoding);
     var message = Message.FromString(text, encoding);
     await BroadcastAsync(message, cancellationToken);
   }
@@ -320,20 +320,6 @@ public class TcpServer : ITcpServer
   public SessionInfo? GetSession(string sessionId)
   {
     return _sessions.TryGetValue(sessionId, out var session) ? session.SessionInfo : null;
-  }
-
-  /// <summary>
-  /// エンコーディング名からEncodingオブジェクトを取得
-  /// </summary>
-  private Encoding GetEncoding(string encodingName)
-  {
-    return encodingName.ToUpperInvariant() switch
-    {
-      "UTF-8" => Encoding.UTF8,
-      "SHIFT-JIS" or "SHIFTJIS" => Encoding.GetEncoding("shift_jis"),
-      "ASCII" => Encoding.ASCII,
-      _ => Encoding.UTF8
-    };
   }
 
   /// <summary>
@@ -381,7 +367,23 @@ public class TcpServer : ITcpServer
   }
 
   /// <summary>
-  /// リソースを解放
+  /// リソースを非同期に解放
+  /// </summary>
+  public async ValueTask DisposeAsync()
+  {
+    if (_disposed)
+    {
+      return;
+    }
+    await StopAsync().ConfigureAwait(false);
+    _externalCancellationTokenRegistration?.Dispose();
+    _cancellationTokenSource.Dispose();
+    _messageReceivedSubject.Dispose();
+    _disposed = true;
+  }
+
+  /// <summary>
+  /// リソースを解放（互換性維持のため残存。可能であれば DisposeAsync を使用してください）
   /// </summary>
   public void Dispose()
   {
@@ -389,7 +391,6 @@ public class TcpServer : ITcpServer
     {
       return;
     }
-
     // ConfigureAwait(false)を使用してデッドロックを回避
     StopAsync().ConfigureAwait(false).GetAwaiter().GetResult();
     _externalCancellationTokenRegistration?.Dispose();
@@ -432,7 +433,7 @@ public class TcpServer : ITcpServer
       _logger = logger;
       _filters = filters;
 
-      var encoding = GetEncoding(config.Encoding);
+      var encoding = TcpMessageUtils.GetEncoding(config.Encoding);
       // 受信時の終端文字を決定：ReceiveMessageTerminatorが設定されている場合はそれを使用、未設定の場合はMessageTerminatorを使用
       string[]? receiveTerminators = config.ReceiveMessageTerminator ??
           (config.MessageTerminator != null ? new[] { config.MessageTerminator } : null);
@@ -528,7 +529,7 @@ public class TcpServer : ITcpServer
       _logger?.LogDebug("TCP Server '{Name}' sending message to session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
 
       // MessageTerminatorを自動的に追加
-      var data = AppendMessageTerminatorIfNeeded(filteredMessage);
+      var data = TcpMessageUtils.AppendMessageTerminatorIfNeeded(filteredMessage, _config.MessageTerminator, _config.Encoding);
 
       // 外部CancellationTokenと内部CancellationTokenSourceを統合
       using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
@@ -556,49 +557,6 @@ public class TcpServer : ITcpServer
       }
     }
 
-    /// <summary>
-    /// MessageTerminatorが設定されている場合、メッセージに自動的に追加する
-    /// </summary>
-    private byte[] AppendMessageTerminatorIfNeeded(Message message)
-    {
-      if (string.IsNullOrEmpty(_config.MessageTerminator))
-      {
-        return message.RawData;
-      }
-
-      var encoding = GetEncoding(_config.Encoding);
-      var terminatorBytes = encoding.GetBytes(_config.MessageTerminator);
-
-      // 既に終端文字が含まれているかチェック（末尾に一致するか）
-      if (message.RawData.Length >= terminatorBytes.Length)
-      {
-        var suffix = new byte[terminatorBytes.Length];
-        Array.Copy(message.RawData, message.RawData.Length - terminatorBytes.Length, suffix, 0, terminatorBytes.Length);
-        if (suffix.SequenceEqual(terminatorBytes))
-        {
-          // 既に終端文字が含まれている場合は追加しない
-          return message.RawData;
-        }
-      }
-
-      // 終端文字を追加
-      var result = new byte[message.RawData.Length + terminatorBytes.Length];
-      Array.Copy(message.RawData, 0, result, 0, message.RawData.Length);
-      Array.Copy(terminatorBytes, 0, result, message.RawData.Length, terminatorBytes.Length);
-      return result;
-    }
-
-    private Encoding GetEncoding(string encodingName)
-    {
-      return encodingName.ToUpperInvariant() switch
-      {
-        "UTF-8" => Encoding.UTF8,
-        "SHIFT-JIS" or "SHIFTJIS" => Encoding.GetEncoding("shift_jis"),
-        "ASCII" => Encoding.ASCII,
-        _ => Encoding.UTF8
-      };
-    }
-
     public void Dispose()
     {
       if (_disposed)
@@ -614,17 +572,5 @@ public class TcpServer : ITcpServer
     }
   }
 
-  private class MessageContext : IMessageContext
-  {
-    public SessionInfo? SessionInfo { get; }
-    public bool IsServerSide { get; }
-    public Dictionary<string, object> Properties { get; } = new();
-
-    public MessageContext(SessionInfo? sessionInfo, bool isServerSide)
-    {
-      SessionInfo = sessionInfo;
-      IsServerSide = isServerSide;
-    }
-  }
 }
 

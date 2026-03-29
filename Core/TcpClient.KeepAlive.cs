@@ -1,4 +1,3 @@
-using System.Text;
 using Dnbn.Models;
 using Microsoft.Extensions.Logging;
 
@@ -15,41 +14,51 @@ partial class TcpClient
         return;
       }
 
-      // 既存のタイマーを停止・破棄
-      _keepAliveTimer?.Stop();
-      _keepAliveTimer?.Dispose();
-      _keepAliveTimer = null;
+      // 既存のループを停止
+      StopKeepAlive();
 
-      _keepAliveTimer = new System.Timers.Timer(_config.KeepAlive.IntervalSeconds * 1000);
-      _keepAliveTimer.Elapsed += async (sender, e) =>
+      var interval = TimeSpan.FromSeconds(_config.KeepAlive.IntervalSeconds);
+      _keepAliveTimerCts = new CancellationTokenSource();
+      var token = _keepAliveTimerCts.Token;
+
+      // async void を避けるために専用 Task で実行
+      _ = Task.Run(() => KeepAliveLoopAsync(interval, token), token);
+    }
+  }
+
+  private async Task KeepAliveLoopAsync(TimeSpan interval, CancellationToken ct)
+  {
+    using var timer = new PeriodicTimer(interval);
+    try
+    {
+      while (await timer.WaitForNextTickAsync(ct))
       {
-        // CancellationTokenがキャンセルされている場合はキープアライブを送信しない
-        if (_cancellationTokenSource.Token.IsCancellationRequested)
+        if (!IsConnected || _disposed)
         {
-          _keepAliveTimer?.Stop();
-          return;
+          break;
         }
 
-        if (IsConnected && !_disposed)
+        try
         {
-          try
-          {
-            var keepAliveMessage = Message.FromString(_config.KeepAlive.Message, GetEncoding(_config.Encoding));
-            await SendKeepAliveAsync(keepAliveMessage, TimeSpan.FromSeconds(_config.KeepAlive.IntervalSeconds));
-          }
-          catch (OperationCanceledException)
-          {
-            // キャンセルされた場合はタイマーを停止
-            _keepAliveTimer?.Stop();
-          }
-          catch (Exception ex)
-          {
-            _logger?.LogError(ex, "Keep-alive failed for client {Name}", Name);
-          }
+          var keepAliveMessage = Message.FromString(
+              _config.KeepAlive!.Message,
+              TcpMessageUtils.GetEncoding(_config.Encoding));
+          await SendKeepAliveAsync(keepAliveMessage, interval);
         }
-      };
-      _keepAliveTimer.AutoReset = true;
-      _keepAliveTimer.Start();
+        catch (OperationCanceledException)
+        {
+          // キャンセルによる正常終了
+          break;
+        }
+        catch (Exception ex)
+        {
+          _logger?.LogError(ex, "Keep-alive failed for client {Name}", Name);
+        }
+      }
+    }
+    catch (OperationCanceledException)
+    {
+      // WaitForNextTickAsync のキャンセルによる正常終了
     }
   }
 
@@ -57,12 +66,9 @@ partial class TcpClient
   {
     lock (_configLock)
     {
-      if (_keepAliveTimer != null)
-      {
-        _keepAliveTimer.Stop();
-        _keepAliveTimer.Dispose();
-        _keepAliveTimer = null;
-      }
+      _keepAliveTimerCts?.Cancel();
+      _keepAliveTimerCts?.Dispose();
+      _keepAliveTimerCts = null;
     }
   }
 
@@ -92,7 +98,7 @@ partial class TcpClient
       // キープアライブ送信時刻を更新
       lock (_statsLock)
       {
-        _lastKeepAliveSentAt = DateTime.UtcNow;
+        _stats.LastKeepAliveSentAt = DateTime.UtcNow;
       }
 
       // タイムアウト用のキャンセレーショントークン
@@ -119,13 +125,13 @@ partial class TcpClient
       // 応答を待つ（タイムアウトは無視して続行）
       try
       {
-        var response = await tcs.Task;
+        await tcs.Task;
         // 応答はReceiveLoopAsyncでOnKeepAliveResponseReceivedイベントが発行される
       }
       catch (TaskCanceledException)
       {
         // タイムアウトは無視（キープアライブは継続）
-        Interlocked.Increment(ref _keepAliveTimeoutCount);
+        Interlocked.Increment(ref _stats.KeepAliveTimeoutCount);
         _logger?.LogWarning("Keep-alive response timeout for client {Name}", Name);
       }
     }

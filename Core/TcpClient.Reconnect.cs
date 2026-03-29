@@ -19,10 +19,10 @@ partial class TcpClient
       }
 
       // リトライ統計を更新
-      Interlocked.Increment(ref _connectionRetryAttempts);
+      Interlocked.Increment(ref _stats.ConnectionRetryAttempts);
       lock (_statsLock)
       {
-        _lastRetryAttemptAt = DateTime.UtcNow;
+        _stats.LastRetryAttemptAt = DateTime.UtcNow;
       }
 
       _reconnectTask = Task.Run(async () =>
@@ -52,8 +52,8 @@ partial class TcpClient
                       await _transport.ConnectAsync(reconnectCts.Token);
                       lock (_statsLock)
                       {
-                        _connectedAt = DateTime.UtcNow;
-                        _connectionRetryAttempts = 0; // 再接続成功時にリセット
+                        _stats.ConnectedAt = DateTime.UtcNow;
+                        _stats.ConnectionRetryAttempts = 0; // 再接続成功時にリセット
                       }
                       _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
@@ -99,11 +99,11 @@ partial class TcpClient
         catch (Exception ex)
         {
           // エラー統計を更新
-          Interlocked.Increment(ref _errorCount);
+          Interlocked.Increment(ref _stats.ErrorCount);
           lock (_statsLock)
           {
-            _lastError = ex.Message;
-            _lastErrorAt = DateTime.UtcNow;
+            _stats.LastError = ex.Message;
+            _stats.LastErrorAt = DateTime.UtcNow;
           }
           _logger?.LogError(ex, "TCP Client '{Name}' automatic reconnection failed", Name);
           OnError?.Invoke(this, ex);
