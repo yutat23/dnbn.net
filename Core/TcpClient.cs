@@ -34,6 +34,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   private Task? _reconnectTask;
   private readonly object _reconnectLock = new();
   private readonly object _configLock = new();
+  private CancellationTokenSource? _delayInterruptCts;
+  private readonly object _delayInterruptLock = new();
 
   // 統計情報
   private readonly ClientStats _stats = new();
@@ -203,7 +205,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
           },
           _config.ConnectionRetryPolicy,
           linkedCts.Token,
-          _logger);
+          _logger,
+          onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } });
     }
     else
     {
@@ -696,6 +699,41 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
         ConnectionRetryAttempts = Interlocked.CompareExchange(ref _stats.ConnectionRetryAttempts, 0, 0),
         LastRetryAttemptAt = lastRetryAttemptAt
       };
+    }
+  }
+
+  /// <inheritdoc />
+  public void InterruptReconnectDelay()
+  {
+    lock (_delayInterruptLock)
+    {
+      try { _delayInterruptCts?.Cancel(); }
+      catch (ObjectDisposedException) { }
+    }
+  }
+
+  /// <inheritdoc />
+  public async Task WaitForConnectionAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+  {
+    if (IsConnected) return;
+
+    var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    void handler(object? sender, EventArgs e) => tcs.TrySetResult();
+    OnConnected += handler;
+    try
+    {
+      if (IsConnected) return;
+      using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+      cts.CancelAfter(timeout);
+      await tcs.Task.WaitAsync(cts.Token);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+      throw new TimeoutException($"Connection was not established within {timeout.TotalSeconds} seconds");
+    }
+    finally
+    {
+      OnConnected -= handler;
     }
   }
 

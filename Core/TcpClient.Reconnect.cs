@@ -90,7 +90,8 @@ partial class TcpClient
                     },
                     _config.ConnectionRetryPolicy,
                     reconnectCts.Token,
-                    _logger);
+                    _logger,
+                    onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } });
         }
         catch (OperationCanceledException)
         {

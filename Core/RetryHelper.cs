@@ -92,11 +92,17 @@ public static class RetryHelper
   /// <summary>
   /// 接続リトライポリシーに基づいて接続処理を実行（無限リトライ対応）
   /// </summary>
+  /// <param name="operation">接続処理</param>
+  /// <param name="policy">リトライポリシー</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <param name="logger">ロガー</param>
+  /// <param name="onDelayStarting">リトライ待機開始時に呼ばれるコールバック。渡された CancellationTokenSource をキャンセルすると待機を即座にスキップできる</param>
   public static async Task ExecuteConnectionRetryAsync(
       Func<Task> operation,
       RetryPolicy? policy,
       CancellationToken cancellationToken = default,
-      ILogger? logger = null)
+      ILogger? logger = null,
+      Action<CancellationTokenSource>? onDelayStarting = null)
   {
     if (policy == null)
     {
@@ -142,7 +148,7 @@ public static class RetryHelper
         var delayMs = policy.GetDelayMs(retryCount - 1);
         logger?.LogWarning("Connection failed (SocketException: {Message}), retrying in {DelayMs}ms (attempt {RetryCount}/{MaxRetryCount})",
             ex.Message, delayMs, retryCount, isInfiniteRetry ? -1 : policy.MaxRetryCount);
-        await Task.Delay(delayMs, cancellationToken);
+        await DelayWithInterruptAsync(delayMs, cancellationToken, onDelayStarting, logger);
       }
       catch (IOException ex)
       {
@@ -162,13 +168,31 @@ public static class RetryHelper
         var delayMs = policy.GetDelayMs(retryCount - 1);
         logger?.LogWarning("Connection failed (IOException: {Message}), retrying in {DelayMs}ms (attempt {RetryCount}/{MaxRetryCount})",
             ex.Message, delayMs, retryCount, isInfiniteRetry ? -1 : policy.MaxRetryCount);
-        await Task.Delay(delayMs, cancellationToken);
+        await DelayWithInterruptAsync(delayMs, cancellationToken, onDelayStarting, logger);
       }
       catch (Exception)
       {
         // その他の例外は即座にスロー
         throw;
       }
+    }
+  }
+
+  private static async Task DelayWithInterruptAsync(
+      int delayMs,
+      CancellationToken cancellationToken,
+      Action<CancellationTokenSource>? onDelayStarting,
+      ILogger? logger)
+  {
+    using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    onDelayStarting?.Invoke(delayCts);
+    try
+    {
+      await Task.Delay(delayMs, delayCts.Token);
+    }
+    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+    {
+      logger?.LogInformation("Connection retry delay interrupted, retrying immediately");
     }
   }
 }

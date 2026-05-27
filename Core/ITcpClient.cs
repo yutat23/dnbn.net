@@ -143,6 +143,20 @@ public interface ITcpClient : IDisposable
   /// 接続状態情報の取得
   /// </summary>
   ClientConnectionInfo ConnectionInfo { get; }
+
+  /// <summary>
+  /// 接続リトライのバックオフ待機を中断し、次の接続試行を即座に実行させる。
+  /// リトライループ自体はキャンセルせず、待機時間のみスキップする。
+  /// </summary>
+  void InterruptReconnectDelay();
+
+  /// <summary>
+  /// 接続が確立されるまで待機する。既に接続済みの場合は即座に返る。
+  /// </summary>
+  /// <param name="timeout">待機のタイムアウト</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <exception cref="TimeoutException">タイムアウト時間内に接続が確立されなかった場合</exception>
+  Task WaitForConnectionAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
 }
 
 
