@@ -1,60 +1,42 @@
-# TCP Messenger Sample プロジェクト
+# TcpMessenger.Sample
 
-このプロジェクトは、`dnbn.net` ライブラリの使用例を示すサンプルアプリケーションです。
+dnbn.net（TCPメッセージ送受信ライブラリ）の機能を**シナリオ別に実演する**サンプル集です。
+1シナリオ＝1ファイルで自己完結しており、コードはそのままコピーして使える形になっています。
 
 ## 実行方法
 
-1. プロジェクトをビルド:
 ```bash
-dotnet build
+# メニューから選択
+dotnet run --project Samples/TcpMessenger.Sample
+
+# シナリオ番号を直接指定（例: シナリオ3）
+dotnet run --project Samples/TcpMessenger.Sample -- 3
 ```
 
-2. アプリケーションを実行:
-```bash
-dotnet run
-```
+シナリオ1〜6は人の操作なしで自動実行されます。7はWeb UI確認のためEnter入力で終了、8は対話モードです。
 
-3. モードを選択:
-   - **1**: サーバーモード - ポート5000でリッスンし、クライアントからのメッセージをエコーします
-   - **2**: クライアントモード - localhost:5000に接続し、メッセージを送信します
-   - **3**: 統合モード - サーバーとクライアントを同時に起動し、Promise的チェーン処理の例を実行します
+## シナリオ一覧
 
-## 機能の例
+| # | シナリオ | 実演する機能 |
+|---|---|---|
+| 1 | クイックスタート | 最小構成のサーバー/クライアント、`SendAsync`によるリクエスト/レスポンス |
+| 2 | チャット／ブロードキャスト | 複数セッション管理、`BroadcastAsync`、`OnMessageReceived`（プッシュ受信）、Rx購読 |
+| 3 | 障害と自動再接続 | `ConnectionRetryPolicy`（無限リトライ）、`IsReconnecting`監視、`InterruptReconnectDelay`、`WaitForConnectionAsync` |
+| 4 | KeepAliveと死活監視 | `KeepAliveConfig`、`ResponsePredicate`による応答判定、`KeepAliveTimeoutCount`での無応答検出 |
+| 5 | レガシープロトコル | 終端文字方式＋Shift-JIS、固定長方式、長さフィールド方式のフレーミング |
+| 6 | リクエスト制御 | タイムアウト、`RetryPolicy`による自動再送、`SendAndWaitAsync`の述語マッチング、FIFOパイプライン |
+| 7 | 運用監視 | `IMessageFilter`（チェックサム付与/検証）、`ConnectionInfo`統計、Web UIダッシュボード |
+| 8 | 対話プレイグラウンド | appsettings.json＋DI（`AddDnbnNet`）構成、実行時の設定変更（KeepAlive/タイムアウト） |
 
-### 1. 基本的な送受信
+## 構成ファイル
 
-サーバーとクライアント間でメッセージを送受信します。
+- `appsettings.json` — シナリオ8（プレイグラウンド）で使用するDI構成の例
+- それ以外のシナリオは設定をコード内に直接記述しています（コピーして使いやすくするため）
 
-### 2. イベントハンドラ
+## 受信経路の使い分け（重要）
 
-接続、切断、メッセージ受信などのイベントをハンドリングします。
+dnbn.net のクライアントには受信メッセージの経路が3つあります。サンプル全体を通して、この使い分けを意識して読んでください。
 
-### 3. Observableパターン
-
-`System.Reactive`を使用したリアクティブなメッセージ処理の例です。
-
-### 4. Promise的チェーン処理
-
-`SendAndWaitAsync`と`Then`拡張メソッドを使用した非同期チェーン処理の例です。
-
-### 5. フィルターパイプライン
-
-`IMessageFilter`を実装したログフィルターの例です。
-
-## 設定
-
-`appsettings.json`でサーバーとクライアントの設定を行います。
-
-- **EchoServer**: ポート5000でリッスン
-- **EchoClient**: localhost:5000に接続
-
-## テスト方法
-
-1. 2つのターミナルを開く
-2. 1つ目のターミナルでサーバーモード（1）を起動
-3. 2つ目のターミナルでクライアントモード（2）を起動
-4. クライアント側でメッセージを入力して送信
-5. サーバー側でエコー応答が確認できる
-
-
-
+1. **`SendAsync` の戻り値** — 自分が送ったリクエストへの応答（`OnMessageReceived`は発火しない）
+2. **`OnMessageReceived` / `MessageReceived`(Rx)** — リクエストと無関係にサーバーから届くプッシュ通知
+3. **`OnKeepAliveResponseReceived`** — KeepAliveメッセージへの応答（`ResponsePredicate`で判定）
