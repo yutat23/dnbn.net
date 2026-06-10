@@ -48,8 +48,9 @@ partial class TcpClient
 
           // キープアライブ応答をチェック（優先的に処理）
           bool handled = false;
-          var keepAliveTcs = Interlocked.Exchange(ref _keepAliveResponseTcs, null);
-          if (keepAliveTcs != null)
+          var keepAliveTcs = Volatile.Read(ref _keepAliveResponseTcs);
+          if (keepAliveTcs != null && IsKeepAliveResponse(filteredMessage) &&
+              Interlocked.CompareExchange(ref _keepAliveResponseTcs, null, keepAliveTcs) == keepAliveTcs)
           {
             keepAliveTcs.TrySetResult(filteredMessage);
             lock (_statsLock)
@@ -63,6 +64,8 @@ partial class TcpClient
           // 待機中のリクエストをFIFO順序でチェック
           if (!handled)
           {
+            SendRequest? matchedRequest = null;
+            List<SendRequest>? timedOutRequests = null;
             lock (_pendingResponseRequestsLock)
             {
               // 完了済み・タイムアウトしたリクエストを削除（O(1) ノード削除）
@@ -80,7 +83,7 @@ partial class TcpClient
                 else if (req.ResponseTcs != null && now - req.EnqueuedAt >= req.Timeout)
                 {
                   _pendingResponseRequests.Remove(node);
-                  req.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds"));
+                  (timedOutRequests ??= new List<SendRequest>()).Add(req);
                 }
                 node = next;
               }
@@ -96,7 +99,7 @@ partial class TcpClient
                   if (req.ResponsePredicate == null || req.ResponsePredicate(filteredMessage))
                   {
                     _pendingResponseRequests.Remove(node);
-                    req.ResponseTcs.TrySetResult(filteredMessage);
+                    matchedRequest = req;
                     handled = true;
                     break;
                   }
@@ -104,6 +107,16 @@ partial class TcpClient
                 node = next;
               }
             }
+
+            if (timedOutRequests != null)
+            {
+              foreach (var req in timedOutRequests)
+              {
+                req.ResponseTcs?.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds"));
+              }
+            }
+
+            matchedRequest?.ResponseTcs?.TrySetResult(filteredMessage);
           }
 
           if (!handled)
@@ -159,5 +172,16 @@ partial class TcpClient
       _logger?.LogInformation("TCP Client '{Name}' will attempt automatic reconnection...", Name);
       StartAutoReconnect();
     }
+  }
+
+  private bool IsKeepAliveResponse(Message message)
+  {
+    Func<Message, bool>? responsePredicate;
+    lock (_configLock)
+    {
+      responsePredicate = _config.KeepAlive?.ResponsePredicate;
+    }
+
+    return responsePredicate?.Invoke(message) ?? true;
   }
 }

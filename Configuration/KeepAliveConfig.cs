@@ -19,4 +19,11 @@ public class KeepAliveConfig
   /// キープアライブメッセージ
   /// </summary>
   public string Message { get; set; } = string.Empty;
+
+  /// <summary>
+  /// キープアライブ応答かどうかを判定する述語。未設定の場合は従来どおり最初の受信メッセージを応答として扱う。
+  /// </summary>
+  [System.Text.Json.Serialization.JsonIgnore]
+  [System.Xml.Serialization.XmlIgnore]
+  public Func<Dnbn.Models.Message, bool>? ResponsePredicate { get; set; }
 }

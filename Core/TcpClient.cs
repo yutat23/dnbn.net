@@ -147,6 +147,20 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     _sendQueueReader = channel.Reader;
   }
 
+  private void ResetConnectionStateForConnect()
+  {
+    if (_cancellationTokenSource.IsCancellationRequested)
+    {
+      var oldCts = _cancellationTokenSource;
+      _cancellationTokenSource = new CancellationTokenSource();
+      oldCts.Dispose();
+    }
+
+    InitializeSendQueue();
+    _isIntentionalDisconnect = false;
+    Interlocked.Exchange(ref _keepAliveResponseTcs, null)?.TrySetCanceled();
+  }
+
   /// <summary>
   /// サーバーに接続
   /// </summary>
@@ -159,6 +173,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     }
 
     cancellationToken.ThrowIfCancellationRequested();
+
+    ResetConnectionStateForConnect();
 
     // 既存の登録を破棄
     _externalCancellationTokenRegistration?.Dispose();
@@ -242,13 +258,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   /// <param name="cancellationToken">キャンセレーショントークン</param>
   public async Task DisconnectAsync(bool isIntentional = true, CancellationToken cancellationToken = default)
   {
-    if (!IsConnected)
-    {
-      return;
-    }
-
     cancellationToken.ThrowIfCancellationRequested();
 
+    var wasConnected = IsConnected;
     _isIntentionalDisconnect = isIntentional;
 
     // 外部CancellationTokenの登録を破棄
@@ -281,7 +293,10 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       }
     }
 
-    await _transport.DisconnectAsync(cancellationToken);
+    if (wasConnected)
+    {
+      await _transport.DisconnectAsync(cancellationToken);
+    }
 
     // 接続時刻をクリア（統計情報は保持）
     lock (_statsLock)
@@ -295,11 +310,16 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       foreach (var request in _pendingResponseRequests)
       {
         if (request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
-        {
-          request.ResponseTcs.TrySetCanceled();
-        }
+        request.ResponseTcs.TrySetCanceled();
       }
       _pendingResponseRequests.Clear();
+    }
+
+    Interlocked.Exchange(ref _keepAliveResponseTcs, null)?.TrySetCanceled();
+
+    if (!wasConnected)
+    {
+      return;
     }
 
     if (isIntentional)
@@ -420,7 +440,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       TimeSpan timeout,
       CancellationToken cancellationToken = default)
   {
-    var tcs = new TaskCompletionSource<Message>();
+    var tcs = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
     var request = new SendRequest
     {
       Message = requestMessage,
@@ -452,7 +472,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     // 応答を待つ
     try
     {
-      return await tcs.Task;
+      return await tcs.Task.WaitAsync(cancellationToken);
     }
     catch (TimeoutException ex)
     {
@@ -483,7 +503,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
             {
               Enabled = _config.KeepAlive.Enabled,
               IntervalSeconds = _config.KeepAlive.IntervalSeconds,
-              Message = _config.KeepAlive.Message
+              Message = _config.KeepAlive.Message,
+              ResponsePredicate = _config.KeepAlive.ResponsePredicate
             };
       }
     }
@@ -496,7 +517,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
             {
               Enabled = value.Enabled,
               IntervalSeconds = value.IntervalSeconds,
-              Message = value.Message
+              Message = value.Message,
+              ResponsePredicate = value.ResponsePredicate
             };
 
         if (IsConnected)
@@ -783,4 +805,3 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   }
 
 }
-

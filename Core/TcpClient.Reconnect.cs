@@ -57,22 +57,7 @@ partial class TcpClient
                       }
                       _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
 
-                      // 新しいCancellationTokenSourceを作成（前のものはキャンセル済み）
-                      lock (_reconnectLock)
-                      {
-                        if (_cancellationTokenSource.IsCancellationRequested)
-                        {
-                          var oldCts = _cancellationTokenSource;
-                          _cancellationTokenSource = new CancellationTokenSource();
-                          oldCts.Dispose();
-                        }
-                      }
-
-                      // 意図的切断フラグをリセット
-                      _isIntentionalDisconnect = false;
-
-                      // 送信キューを再初期化（DisconnectAsyncでComplete()が呼ばれているため）
-                      InitializeSendQueue();
+                      ResetConnectionStateForConnect();
 
                       OnConnected?.Invoke(this, EventArgs.Empty);
 

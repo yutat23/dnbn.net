@@ -20,7 +20,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   private TcpListener? _listener;
   private readonly ConcurrentDictionary<string, ServerSession> _sessions = new();
   private readonly Subject<(Message message, SessionInfo sessionInfo)> _messageReceivedSubject = new();
-  private readonly CancellationTokenSource _cancellationTokenSource = new();
+  private CancellationTokenSource _cancellationTokenSource = new();
   private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
 
@@ -93,6 +93,12 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     }
 
     cancellationToken.ThrowIfCancellationRequested();
+
+    if (_cancellationTokenSource.IsCancellationRequested)
+    {
+      _cancellationTokenSource.Dispose();
+      _cancellationTokenSource = new CancellationTokenSource();
+    }
 
     // 既存の登録を破棄
     _externalCancellationTokenRegistration?.Dispose();
@@ -410,6 +416,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     private readonly MessageParser _parser;
     private NetworkStream? _stream;
     private readonly CancellationTokenSource _cancellationTokenSource = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
     private bool _disposed = false;
 
     public SessionInfo SessionInfo => _sessionInfo;
@@ -533,8 +540,16 @@ public class TcpServer : ITcpServer, IAsyncDisposable
 
       // 外部CancellationTokenと内部CancellationTokenSourceを統合
       using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
-      await _stream.WriteAsync(data, linkedCts.Token);
-      await _stream.FlushAsync(linkedCts.Token);
+      await _sendLock.WaitAsync(linkedCts.Token);
+      try
+      {
+        await _stream.WriteAsync(data, linkedCts.Token);
+        await _stream.FlushAsync(linkedCts.Token);
+      }
+      finally
+      {
+        _sendLock.Release();
+      }
     }
 
     public async Task DisconnectAsync(bool isIntentional = true)
@@ -568,9 +583,9 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
       _tcpClient.Dispose();
       _cancellationTokenSource.Dispose();
+      _sendLock.Dispose();
       _disposed = true;
     }
   }
 
 }
-

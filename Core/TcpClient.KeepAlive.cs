@@ -40,9 +40,22 @@ partial class TcpClient
 
         try
         {
+          string messageText;
+          string encodingName;
+          lock (_configLock)
+          {
+            if (_config.KeepAlive == null || !_config.KeepAlive.Enabled)
+            {
+              break;
+            }
+
+            messageText = _config.KeepAlive.Message;
+            encodingName = _config.Encoding;
+          }
+
           var keepAliveMessage = Message.FromString(
-              _config.KeepAlive!.Message,
-              TcpMessageUtils.GetEncoding(_config.Encoding));
+              messageText,
+              TcpMessageUtils.GetEncoding(encodingName));
           await SendKeepAliveAsync(keepAliveMessage, interval);
         }
         catch (OperationCanceledException)
@@ -84,7 +97,7 @@ partial class TcpClient
     }
 
     // キープアライブ応答用のTaskCompletionSourceを作成
-    var tcs = new TaskCompletionSource<Message>();
+    var tcs = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
     var previousTcs = Interlocked.Exchange(ref _keepAliveResponseTcs, tcs);
 
     // 前のキープアライブがまだ待機中の場合はキャンセル
