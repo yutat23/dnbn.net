@@ -24,6 +24,9 @@ public class TcpClientTests
     return new TcpClient(config, transport);
   }
 
+  private static TcpClient CreateClient(MockTransport transport, ClientConfig config)
+      => new(config, transport);
+
   // ---------------------------------------------------------------------------
   // 接続 / 切断テスト
   // ---------------------------------------------------------------------------
@@ -61,6 +64,19 @@ public class TcpClientTests
     await client.DisconnectAsync();
 
     Assert.False(client.IsConnected);
+  }
+
+  [Fact]
+  public async Task ConnectAsync_AfterDisconnect_ReinitializesInternalState()
+  {
+    var transport = new MockTransport();
+    await using var client = CreateClient(transport);
+
+    await client.ConnectAsync();
+    await client.DisconnectAsync();
+    await client.ConnectAsync();
+
+    Assert.True(client.IsConnected);
   }
 
   [Fact]
@@ -119,6 +135,51 @@ public class TcpClientTests
   }
 
   [Fact]
+  public async Task SendAsync_ResponseIsNotConsumedByKeepAlive_WhenPredicateDoesNotMatch()
+  {
+    var transport = new MockTransport();
+    var config = new ClientConfig
+    {
+      Name = "TestClient",
+      RemoteHost = "127.0.0.1",
+      RemotePort = 9999,
+      Encoding = "UTF-8",
+      MessageTerminator = "\n",
+      TimeoutMilliseconds = 1000,
+      KeepAlive = new KeepAliveConfig
+      {
+        Enabled = true,
+        IntervalSeconds = 1,
+        Message = "keepalive",
+        ResponsePredicate = message => message.Text?.Trim() == "keepalive_ack"
+      }
+    };
+    await using var client = CreateClient(transport, config);
+
+    await client.ConnectAsync();
+
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    while (!transport.SentData.Any(data => Encoding.UTF8.GetString(data).Contains("keepalive")))
+    {
+      await Task.Delay(20, timeout.Token);
+    }
+
+    var responseTask = client.SendAsync(
+        Message.FromString("ping", Encoding.UTF8),
+        TimeSpan.FromSeconds(1));
+
+    while (!transport.SentData.Any(data => Encoding.UTF8.GetString(data).Contains("ping")))
+    {
+      await Task.Delay(20, timeout.Token);
+    }
+
+    transport.EnqueueReceiveData("pong");
+
+    var response = await responseTask;
+    Assert.Equal("pong", response.Text?.Trim());
+  }
+
+  [Fact]
   public async Task SendAsync_ThrowsTimeoutException_WhenNoResponse()
   {
     var transport = new MockTransport();
@@ -173,26 +234,16 @@ public class TcpClientTests
 
     await client.ConnectAsync();
 
-    // 応答データを順番にキューへ入れる
-    var responses = new List<string>();
-    _ = Task.Run(async () =>
+    // 3つのリクエストを順番に送信（送信を確認してから応答を返し、タイミング依存を排除）
+    for (int i = 1; i <= 3; i++)
     {
-      await Task.Delay(50);
-      for (int i = 1; i <= 3; i++)
-      {
-        transport.EnqueueReceiveData($"response{i}");
-        await Task.Delay(20);
-      }
-    });
+      var sendTask = client.SendAsync(Message.FromString($"req{i}", Encoding.UTF8), TimeSpan.FromSeconds(3));
+      await TestWait.UntilSentAsync(transport, $"req{i}");
+      transport.EnqueueReceiveData($"response{i}");
 
-    // 3つのリクエストを順番に送信
-    var r1 = await client.SendAsync(Message.FromString("req1", Encoding.UTF8), TimeSpan.FromSeconds(3));
-    var r2 = await client.SendAsync(Message.FromString("req2", Encoding.UTF8), TimeSpan.FromSeconds(3));
-    var r3 = await client.SendAsync(Message.FromString("req3", Encoding.UTF8), TimeSpan.FromSeconds(3));
-
-    Assert.Equal("response1", r1.Text?.Trim());
-    Assert.Equal("response2", r2.Text?.Trim());
-    Assert.Equal("response3", r3.Text?.Trim());
+      var response = await sendTask;
+      Assert.Equal($"response{i}", response.Text?.Trim());
+    }
   }
 
   // ---------------------------------------------------------------------------

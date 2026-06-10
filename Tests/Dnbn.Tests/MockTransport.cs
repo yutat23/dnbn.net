@@ -9,7 +9,7 @@ namespace Dnbn.Tests;
 internal class MockTransport : ITransport
 {
   private bool _connected;
-  private readonly Channel<byte[]> _receiveChannel = Channel.CreateUnbounded<byte[]>();
+  private Channel<byte[]> _receiveChannel = Channel.CreateUnbounded<byte[]>();
   private readonly List<byte[]> _sentData = new();
   private readonly object _sentLock = new();
   private Exception? _connectException;
@@ -38,6 +38,10 @@ internal class MockTransport : ITransport
       var ex = _connectException;
       _connectException = null;
       throw ex;
+    }
+    if (_receiveChannel.Reader.Completion.IsCompleted)
+    {
+      _receiveChannel = Channel.CreateUnbounded<byte[]>();
     }
     _connected = true;
     return Task.CompletedTask;

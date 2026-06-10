@@ -72,6 +72,31 @@ public class TcpServerTests
   }
 
   [Fact]
+  public async Task StartAsync_AfterStop_AcceptsClients()
+  {
+    int port = NextPort();
+    await using var server = CreateServer(port);
+
+    await server.StartAsync();
+    await server.StopAsync();
+
+    var connectedTcs = new TaskCompletionSource<SessionInfo>();
+    server.OnClientConnected += (_, session) => connectedTcs.TrySetResult(session);
+
+    await server.StartAsync();
+
+    using var client = new Socket(SocketType.Stream, ProtocolType.Tcp);
+    await client.ConnectAsync(IPAddress.Loopback, port);
+
+    var session = await connectedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+    Assert.NotNull(session);
+    Assert.Single(server.GetAllSessions());
+
+    await server.StopAsync();
+  }
+
+  [Fact]
   public async Task DisposeAsync_StopsServer()
   {
     int port = NextPort();
@@ -166,8 +191,9 @@ public class TcpServerTests
     using var client2 = new Socket(SocketType.Stream, ProtocolType.Tcp);
     await client1.ConnectAsync(IPAddress.Loopback, port);
     await client2.ConnectAsync(IPAddress.Loopback, port);
-    await Task.Delay(100); // セッション確立を待つ
 
+    // セッション確立を確認（固定待ちではなく条件で待機）
+    await TestWait.UntilAsync(() => server.GetAllSessions().Count() == 2);
     Assert.Equal(2, server.GetAllSessions().Count());
 
     await server.BroadcastAsync("broadcast_msg");
