@@ -120,6 +120,29 @@ public interface ITcpClient : IDisposable
       CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// メッセージを送信する（応答を待たない通知電文用）。
+  /// 送信キューを経由するため、SendAsync との送信順序は保証される。
+  /// 戻りのTaskはソケットへの書き込み完了時に完了する（応答の有無は関知しない）。
+  /// リトライポリシーは適用されない。
+  /// </summary>
+  /// <param name="message">送信するメッセージ</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task SendOneWayAsync(Message message, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// 文字列を送信する（応答を待たない通知電文用、設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  Task SendOneWayAsync(string text, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// 通知電文の判定述語の取得・設定。
+  /// マッチした受信メッセージは応答マッチングをスキップして OnMessageReceived に直接配信される。
+  /// </summary>
+  Func<Message, bool>? NotificationPredicate { get; set; }
+
+  /// <summary>
   /// KeepAlive設定の取得・設定
   /// </summary>
   KeepAliveConfig? KeepAlive { get; set; }

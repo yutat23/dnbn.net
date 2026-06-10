@@ -56,6 +56,17 @@ public class ClientConfig
   public KeepAliveConfig? KeepAlive { get; set; }
 
   /// <summary>
+  /// 通知電文の判定述語。マッチした受信メッセージは応答マッチングをスキップして
+  /// OnMessageReceived / MessageReceived(Rx) に直接配信される。
+  /// 未設定（null）の場合は従来どおりの動作。
+  /// 注意: キープアライブ応答の判定が先に行われるため、KeepAliveと併用する場合は
+  /// KeepAliveConfig.ResponsePredicate を設定して通知電文と区別すること。
+  /// </summary>
+  [System.Text.Json.Serialization.JsonIgnore]
+  [System.Xml.Serialization.XmlIgnore]
+  public Func<Dnbn.Models.Message, bool>? NotificationPredicate { get; set; }
+
+  /// <summary>
   /// 固定長ヘッダサイズ（バイト）
   /// </summary>
   public int? FixedHeaderLength { get; set; }
@@ -87,6 +98,5 @@ public class ClientConfig
   /// </summary>
   public int? MaxReceiveBufferBytes { get; set; }
 }
-
 
 

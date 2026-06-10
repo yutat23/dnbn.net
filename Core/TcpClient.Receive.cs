@@ -61,8 +61,11 @@ partial class TcpClient
             handled = true;
           }
 
+          // 通知電文をチェック（応答マッチングをスキップして通常配信へ）
+          bool isNotification = !handled && IsNotificationMessage(filteredMessage);
+
           // 待機中のリクエストをFIFO順序でチェック
-          if (!handled)
+          if (!handled && !isNotification)
           {
             SendRequest? matchedRequest = null;
             List<SendRequest>? timedOutRequests = null;
@@ -183,5 +186,30 @@ partial class TcpClient
     }
 
     return responsePredicate?.Invoke(message) ?? true;
+  }
+
+  private bool IsNotificationMessage(Message message)
+  {
+    Func<Message, bool>? predicate;
+    lock (_configLock)
+    {
+      predicate = _config.NotificationPredicate;
+    }
+
+    if (predicate == null)
+    {
+      return false;
+    }
+
+    try
+    {
+      return predicate(message);
+    }
+    catch (Exception ex)
+    {
+      // ユーザー定義述語の例外で受信ループを止めないよう、通知ではないものとして扱う
+      _logger?.LogError(ex, "NotificationPredicate threw an exception in client {Name}", Name);
+      return false;
+    }
   }
 }

@@ -24,7 +24,7 @@ dotnet run --project Samples/TcpMessenger.Sample -- 3
 | 3 | 障害と自動再接続 | `ConnectionRetryPolicy`（無限リトライ）、`IsReconnecting`監視、`InterruptReconnectDelay`、`WaitForConnectionAsync` |
 | 4 | KeepAliveと死活監視 | `KeepAliveConfig`、`ResponsePredicate`による応答判定、`KeepAliveTimeoutCount`での無応答検出 |
 | 5 | レガシープロトコル | 終端文字方式＋Shift-JIS、固定長方式、長さフィールド方式のフレーミング |
-| 6 | リクエスト制御 | タイムアウト、`RetryPolicy`による自動再送、`SendAndWaitAsync`の述語マッチング、FIFOパイプライン |
+| 6 | リクエスト制御 | タイムアウト、`RetryPolicy`による自動再送、`SendAndWaitAsync`の述語マッチング、通知電文（`NotificationPredicate`／`SendOneWayAsync`）、FIFOパイプライン |
 | 7 | 運用監視 | `IMessageFilter`（チェックサム付与/検証）、`ConnectionInfo`統計、Web UIダッシュボード |
 | 8 | 対話プレイグラウンド | appsettings.json＋DI（`AddDnbnNet`）構成、実行時の設定変更（KeepAlive/タイムアウト） |
 

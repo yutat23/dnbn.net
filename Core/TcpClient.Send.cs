@@ -42,6 +42,9 @@ partial class TcpClient
 
           // 統計情報を更新
           Interlocked.Increment(ref _stats.MessagesSent);
+
+          // 送信完了を通知（通知電文の送信元へ）
+          request.SendCompletedTcs?.TrySetResult();
         }
         catch (OperationCanceledException)
         {
@@ -54,6 +57,7 @@ partial class TcpClient
             }
             request.ResponseTcs.TrySetCanceled();
           }
+          request.SendCompletedTcs?.TrySetCanceled();
         }
         catch (Exception ex)
         {
@@ -66,6 +70,7 @@ partial class TcpClient
             }
             request.ResponseTcs.TrySetException(ex);
           }
+          request.SendCompletedTcs?.TrySetException(ex);
           _logger?.LogError(ex, "Error sending message in client {Name}", Name);
         }
       }

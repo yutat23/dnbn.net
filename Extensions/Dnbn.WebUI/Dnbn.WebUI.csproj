@@ -11,7 +11,7 @@
     <Authors>dnbn.net</Authors>
     <Description>Web UI拡張機能 for dnbn.net - TCP Messengerの状態をWebブラウザで表示</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>1.1.19</Version>
+    <Version>1.2.0</Version>
     <PackageId>dnbn.net.WebUI</PackageId>
     <IsPackable>true</IsPackable>
     <NoWarn>$(NoWarn);NU1510</NoWarn>

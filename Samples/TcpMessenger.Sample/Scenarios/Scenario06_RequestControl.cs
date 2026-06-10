@@ -12,6 +12,8 @@ namespace TcpMessenger.Sample.Scenarios;
 ///   - SendAsync のタイムアウト
 ///   - RetryPolicy による自動再送（実行時のポリシー変更も実演）
 ///   - SendAndWaitAsync の述語マッチング（途中のイベント通知を読み飛ばす）
+///   - NotificationPredicate による通知電文の自動振り分け
+///   - SendOneWayAsync による応答を待たない通知電文の送信
 ///   - 複数リクエストのFIFOパイプライン処理
 /// </summary>
 internal static class Scenario06_RequestControl
@@ -61,6 +63,11 @@ internal static class Scenario06_RequestControl
             await server.SendAsync(sessionId, "EVENT: 計算を開始しました");
             await server.SendAsync(sessionId, "EVENT: 処理中...");
             await server.SendAsync(sessionId, "RESULT: 42");
+            break;
+
+          case var log when log.StartsWith("LOG:"):
+            // 通知電文（応答を返さない）
+            SampleConsole.Result($"サーバー: 通知電文を受信（応答なし）: {log}");
             break;
 
           default:
@@ -134,6 +141,22 @@ internal static class Scenario06_RequestControl
         msg => msg.Text?.StartsWith("RESULT:") == true,
         TimeSpan.FromSeconds(5));
     SampleConsole.Result($"述語にマッチした応答: {result.Text?.Trim()}");
+
+    // --- 通知電文（NotificationPredicate + SendOneWayAsync） ---
+    SampleConsole.Step("通知電文: 受信は NotificationPredicate で自動振り分け、送信は SendOneWayAsync");
+    SampleConsole.Note("EVENT: で始まる受信を通知と判定させると、素の SendAsync でも応答と取り違えない");
+
+    client.NotificationPredicate = msg => msg.Text?.StartsWith("EVENT:") == true;
+
+    // SendAndWaitAsync の述語なしでも、通知判定があるので RESULT が正しく応答になる
+    var calcResult = await client.SendAsync("CALC", TimeSpan.FromSeconds(5));
+    SampleConsole.Result($"SendAsync の応答: {calcResult.Text?.Trim()}");
+
+    // 応答を待たない通知電文の送信（戻りのTaskはソケット書き込み完了で完了する）
+    await client.SendOneWayAsync("LOG: クライアント側の定期報告");
+    SampleConsole.Result("SendOneWayAsync 完了（応答を待たずに戻った）");
+
+    client.NotificationPredicate = null; // 以降のデモに影響しないよう解除
 
     // --- FIFOパイプライン ---
     SampleConsole.Step("3つのリクエストを応答を待たずに連続発行します（FIFO順で応答が対応付く）");

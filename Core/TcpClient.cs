@@ -434,6 +434,53 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     return await SendAndWaitAsync(message, responsePredicate, timeout, cancellationToken);
   }
 
+  /// <summary>
+  /// メッセージを送信する（応答を待たない通知電文用）。
+  /// 送信キューを経由するため、SendAsync との送信順序は保証される。
+  /// 戻りのTaskはソケットへの書き込み完了時に完了する（応答の有無は関知しない）。
+  /// リトライポリシーは適用されない。
+  /// </summary>
+  /// <param name="message">送信するメッセージ</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public async Task SendOneWayAsync(Message message, CancellationToken cancellationToken = default)
+  {
+    if (!IsConnected)
+    {
+      throw new InvalidOperationException("Not connected");
+    }
+
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // 外部CancellationTokenと内部CancellationTokenSourceを統合
+    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
+
+    var sendCompletedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var request = new SendRequest
+    {
+      Message = message,
+      ResponseTcs = null, // 応答を待たない
+      SendCompletedTcs = sendCompletedTcs,
+      EnqueuedAt = DateTime.UtcNow,
+      CancellationToken = linkedCts.Token
+    };
+
+    await _sendQueueWriter.WriteAsync(request, linkedCts.Token);
+
+    // ソケットへの書き込み完了（または送信失敗）を待つ
+    await sendCompletedTcs.Task.WaitAsync(linkedCts.Token);
+  }
+
+  /// <summary>
+  /// 文字列を送信する（応答を待たない通知電文用、設定のEncodingを使用）
+  /// </summary>
+  /// <param name="text">送信する文字列</param>
+  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  public Task SendOneWayAsync(string text, CancellationToken cancellationToken = default)
+  {
+    var encoding = TcpMessageUtils.GetEncoding(_config.Encoding);
+    return SendOneWayAsync(Message.FromString(text, encoding), cancellationToken);
+  }
+
   private async Task<Message> SendAndWaitSingleAsync(
       Message requestMessage,
       Func<Message, bool> responsePredicate,
@@ -486,6 +533,29 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       _logger?.LogWarning("Request timeout for client {Name}: {Message}", Name, ex.Message);
       OnError?.Invoke(this, ex);
       throw;
+    }
+  }
+
+  /// <summary>
+  /// 通知電文の判定述語の取得・設定。
+  /// マッチした受信メッセージは応答マッチングをスキップして OnMessageReceived に直接配信される。
+  /// </summary>
+  public Func<Message, bool>? NotificationPredicate
+  {
+    get
+    {
+      lock (_configLock)
+      {
+        return _config.NotificationPredicate;
+      }
+    }
+    set
+    {
+      lock (_configLock)
+      {
+        _config.NotificationPredicate = value;
+      }
+      _logger?.LogInformation("TCP Client '{Name}' 通知電文の判定述語を{State}しました", Name, value != null ? "設定" : "解除");
     }
   }
 
@@ -802,6 +872,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     public TimeSpan Timeout { get; set; }
     public DateTime EnqueuedAt { get; set; }
     public CancellationToken CancellationToken { get; set; }
+    public TaskCompletionSource? SendCompletedTcs { get; set; } // 送信完了通知（通知電文用）
   }
 
 }
