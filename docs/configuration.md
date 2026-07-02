@@ -30,7 +30,7 @@
 | `FixedBodyLength` | `int?` | `null` | 固定長方式のボディ長 |
 | `LengthFieldOffset` | `int?` | `null` | ヘッダ内の長さフィールド開始位置 |
 | `LengthFieldLength` | `int?` | `null` | 長さフィールドのバイト数 |
-| `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ |
+| `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ（`true`: Information、`false`: Debug レベルで出力） |
 | `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。未設定または0以下は無制限 |
 
 ## ClientConfig
@@ -48,12 +48,13 @@
 | `RetryPolicy` | `RetryPolicy?` | `null` | メッセージ送信リトライ |
 | `ConnectionRetryPolicy` | `RetryPolicy?` | `null` | 接続失敗/切断時の再接続リトライ |
 | `TimeoutMilliseconds` | `int` | `5000` | `SendAsync` の既定タイムアウト |
+| `SendQueueCapacity` | `int` | `1000` | 送信キューの最大サイズ。満杯時は送信呼び出しが空き待ちになる |
 | `KeepAlive` | `KeepAliveConfig?` | `null` | KeepAlive設定 |
 | `FixedHeaderLength` | `int?` | `null` | 固定長/長さフィールド方式のヘッダ長 |
 | `FixedBodyLength` | `int?` | `null` | 固定長方式のボディ長 |
 | `LengthFieldOffset` | `int?` | `null` | ヘッダ内の長さフィールド開始位置 |
 | `LengthFieldLength` | `int?` | `null` | 長さフィールドのバイト数 |
-| `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ |
+| `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ（`true`: Information、`false`: Debug レベルで出力） |
 | `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。未設定または0以下は無制限 |
 
 `NotificationPredicate` はコードから設定するプロパティです。JSON/XML設定には含められません。

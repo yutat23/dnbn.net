@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using Dnbn.Models;
 
@@ -8,18 +9,41 @@ namespace Dnbn.Core;
 /// </summary>
 internal static class TcpMessageUtils
 {
+  private static readonly ConcurrentDictionary<string, Encoding> EncodingCache =
+      new(StringComparer.OrdinalIgnoreCase);
+
+  static TcpMessageUtils()
+  {
+    // Shift-JIS等のコードページ系エンコーディングをライブラリ単体で使えるようにする
+    // （RegisterProviderは冪等なので、アプリ側で既に登録済みでも問題ない）
+    Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+  }
+
   /// <summary>
   /// エンコーディング名から Encoding オブジェクトを取得
   /// </summary>
   internal static Encoding GetEncoding(string encodingName)
   {
-    return encodingName.ToUpperInvariant() switch
+    return EncodingCache.GetOrAdd(encodingName, static name => name.ToUpperInvariant() switch
     {
       "UTF-8" => Encoding.UTF8,
       "SHIFT-JIS" or "SHIFTJIS" => Encoding.GetEncoding("shift_jis"),
       "ASCII" => Encoding.ASCII,
-      _ => Encoding.UTF8
-    };
+      _ => ResolveEncoding(name)
+    });
+  }
+
+  private static Encoding ResolveEncoding(string name)
+  {
+    try
+    {
+      return Encoding.GetEncoding(name);
+    }
+    catch (ArgumentException)
+    {
+      // 互換性維持のため、未知のエンコーディング名は従来どおりUTF-8にフォールバックする
+      return Encoding.UTF8;
+    }
   }
 
   /// <summary>

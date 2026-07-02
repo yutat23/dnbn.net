@@ -16,8 +16,24 @@ partial class TcpClient
       {
         try
         {
-          // 応答待ちのリクエストの場合は、リストに追加（タイムアウト済みはスキップ）
-          if (request.ResponseTcs != null && !request.ResponseTcs.Task.IsCompleted)
+          // キュー滞留中にキャンセルされたリクエストは送信しない
+          if (request.CancellationToken.IsCancellationRequested)
+          {
+            request.ResponseTcs?.TrySetCanceled(request.CancellationToken);
+            request.SendCompletedTcs?.TrySetCanceled(request.CancellationToken);
+            continue;
+          }
+
+          // キュー滞留中にタイムアウト等で完了済みになったリクエストは送信しない
+          // （呼び出し側は既にTimeoutExceptionを受け取っており、電文だけが
+          // 後から届くと応答の対応関係が崩れるため）
+          if (request.ResponseTcs != null && request.ResponseTcs.Task.IsCompleted)
+          {
+            continue;
+          }
+
+          // 応答待ちのリクエストの場合は、リストに追加
+          if (request.ResponseTcs != null)
           {
             lock (_pendingResponseRequestsLock)
             {
@@ -33,8 +49,9 @@ partial class TcpClient
             filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
           }
 
-          // メッセージログ出力
-          _logger?.LogDebug("TCP Client '{Name}' sending message: {MessageText}", Name, filteredMessage.Text?.Trim());
+          // メッセージログ出力（EnableMessageLogging有効時はInformationレベル）
+          _logger?.Log(MessageLogLevel, "TCP Client '{Name}' sending message to {Host}:{Port}: {MessageText}",
+              Name, _config.RemoteHost, _config.RemotePort, filteredMessage.Text?.Trim());
 
           // MessageTerminatorを自動的に追加
           var dataToSend = TcpMessageUtils.AppendMessageTerminatorIfNeeded(filteredMessage, _config.MessageTerminator, _config.Encoding);

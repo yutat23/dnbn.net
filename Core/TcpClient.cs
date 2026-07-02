@@ -32,10 +32,12 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   private TaskCompletionSource<Message>? _keepAliveResponseTcs;
   private bool _isIntentionalDisconnect = false;
   private Task? _reconnectTask;
+  private CancellationTokenSource? _reconnectCts;
   private readonly object _reconnectLock = new();
   private readonly object _configLock = new();
   private CancellationTokenSource? _delayInterruptCts;
   private readonly object _delayInterruptLock = new();
+  private readonly SemaphoreSlim _disconnectLock = new(1, 1);
 
   // 統計情報
   private readonly ClientStats _stats = new();
@@ -137,7 +139,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   /// </summary>
   private void InitializeSendQueue()
   {
-    var channelOptions = new BoundedChannelOptions(1000)
+    var channelOptions = new BoundedChannelOptions(Math.Max(1, _config.SendQueueCapacity))
     {
       FullMode = BoundedChannelFullMode.Wait
     };
@@ -157,6 +159,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     }
 
     InitializeSendQueue();
+    // 前回接続の中途半端な受信データが残っていると、再接続後の
+    // メッセージ境界がずれるためクリアする
+    _parser.Clear();
     _isIntentionalDisconnect = false;
     Interlocked.Exchange(ref _keepAliveResponseTcs, null)?.TrySetCanceled();
   }
@@ -197,57 +202,70 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       await RetryHelper.ExecuteConnectionRetryAsync(
           async () =>
           {
-            await _transport.ConnectAsync(linkedCts.Token);
-            lock (_statsLock)
-            {
-              _stats.ConnectedAt = DateTime.UtcNow;
-              _stats.ConnectionRetryAttempts = 0; // 接続成功時にリセット
-            }
-            _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
-
-            OnConnected?.Invoke(this, EventArgs.Empty);
-
-            // 送信ループを開始
-            _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
-
-            // 受信ループを開始
-            _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
-
-            // キープアライブを開始
-            if (_config.KeepAlive?.Enabled == true)
-            {
-              StartKeepAlive();
-            }
+            await _transport.ConnectAsync(linkedCts.Token).ConfigureAwait(false);
+            OnTransportConnected(isReconnect: false);
           },
           _config.ConnectionRetryPolicy,
           linkedCts.Token,
           _logger,
-          onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } });
+          onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } },
+          targetDescription: RetryLogTarget).ConfigureAwait(false);
     }
     else
     {
       // リトライポリシーが設定されていない場合は、従来通り1回だけ試行
-      await _transport.ConnectAsync(linkedCts.Token);
-      lock (_statsLock)
-      {
-        _stats.ConnectedAt = DateTime.UtcNow;
-        _stats.ConnectionRetryAttempts = 0; // 接続成功時にリセット
-      }
+      await _transport.ConnectAsync(linkedCts.Token).ConfigureAwait(false);
+      OnTransportConnected(isReconnect: false);
+    }
+  }
+
+  /// <summary>
+  /// 相手先の識別名（ログ出力用）
+  /// </summary>
+  private string RemoteTarget => $"{_config.RemoteHost}:{_config.RemotePort}";
+
+  /// <summary>
+  /// RetryHelperのログに出力する識別名（相手先＋クライアント名）
+  /// </summary>
+  private string RetryLogTarget => $"{RemoteTarget} (client '{Name}')";
+
+  /// <summary>
+  /// 電文内容ログの出力レベル。
+  /// EnableMessageLogging有効時はInformation、無効時は従来どおりDebugで出力する
+  /// </summary>
+  private LogLevel MessageLogLevel => _config.EnableMessageLogging ? LogLevel.Information : LogLevel.Debug;
+
+  /// <summary>
+  /// トランスポート接続成功後の共通処理（統計更新・イベント発火・送受信ループ開始・KeepAlive開始）
+  /// </summary>
+  private void OnTransportConnected(bool isReconnect)
+  {
+    lock (_statsLock)
+    {
+      _stats.ConnectedAt = DateTime.UtcNow;
+      _stats.ConnectionRetryAttempts = 0; // 接続成功時にリセット
+    }
+    if (isReconnect)
+    {
+      _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
+    }
+    else
+    {
       _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
+    }
 
-      OnConnected?.Invoke(this, EventArgs.Empty);
+    OnConnected?.Invoke(this, EventArgs.Empty);
 
-      // 送信ループを開始
-      _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
+    // 送信ループを開始
+    _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
 
-      // 受信ループを開始
-      _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
+    // 受信ループを開始
+    _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
 
-      // キープアライブを開始
-      if (_config.KeepAlive?.Enabled == true)
-      {
-        StartKeepAlive();
-      }
+    // キープアライブを開始
+    if (_config.KeepAlive?.Enabled == true)
+    {
+      StartKeepAlive();
     }
   }
 
@@ -260,6 +278,47 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   {
     cancellationToken.ThrowIfCancellationRequested();
 
+    // 意図的な切断の場合は、進行中の自動再接続を中断する
+    // （NW障害起因の内部呼び出しでは再接続を止めない）
+    if (isIntentional)
+    {
+      Task? reconnectTask = null;
+      lock (_reconnectLock)
+      {
+        if (_reconnectTask != null && !_reconnectTask.IsCompleted)
+        {
+          try
+          {
+            _reconnectCts?.Cancel();
+          }
+          catch (ObjectDisposedException)
+          {
+          }
+          reconnectTask = _reconnectTask;
+        }
+      }
+      if (reconnectTask != null)
+      {
+        // 再接続タスク自身がOperationCanceledExceptionを処理するため、ここでは例外は伝播しない
+        await reconnectTask.ConfigureAwait(false);
+      }
+    }
+
+    // 受信ループ起因の切断とユーザーからの切断が並行実行されても
+    // OnDisconnectedの二重発火やtransportの二重切断が起きないよう直列化する
+    await _disconnectLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+      await DisconnectCoreAsync(isIntentional, cancellationToken).ConfigureAwait(false);
+    }
+    finally
+    {
+      _disconnectLock.Release();
+    }
+  }
+
+  private async Task DisconnectCoreAsync(bool isIntentional, CancellationToken cancellationToken)
+  {
     var wasConnected = IsConnected;
     _isIntentionalDisconnect = isIntentional;
 
@@ -281,7 +340,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     {
       try
       {
-        await _sendLoopTask;
+        await _sendLoopTask.ConfigureAwait(false);
       }
       catch (OperationCanceledException)
       {
@@ -295,7 +354,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
 
     if (wasConnected)
     {
-      await _transport.DisconnectAsync(cancellationToken);
+      await _transport.DisconnectAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // 接続時刻をクリア（統計情報は保持）
@@ -324,11 +383,11 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
 
     if (isIntentional)
     {
-      _logger?.LogInformation("TCP Client '{Name}' disconnected", Name);
+      _logger?.LogInformation("TCP Client '{Name}' disconnected from {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
     }
     else
     {
-      _logger?.LogError("TCP Client '{Name}' disconnected unexpectedly (network error)", Name);
+      _logger?.LogError("TCP Client '{Name}' disconnected unexpectedly from {Host}:{Port} (network error)", Name, _config.RemoteHost, _config.RemotePort);
     }
     OnDisconnected?.Invoke(this, EventArgs.Empty);
   }
@@ -389,7 +448,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
           _config.RetryPolicy,
           responsePredicate,
           linkedCts.Token,
-          _logger);
+          _logger,
+          RetryLogTarget);
     }
 
     return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token);
@@ -568,28 +628,14 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     {
       lock (_configLock)
       {
-        return _config.KeepAlive == null ? null :
-            new KeepAliveConfig
-            {
-              Enabled = _config.KeepAlive.Enabled,
-              IntervalSeconds = _config.KeepAlive.IntervalSeconds,
-              Message = _config.KeepAlive.Message,
-              ResponsePredicate = _config.KeepAlive.ResponsePredicate
-            };
+        return _config.KeepAlive?.Clone();
       }
     }
     set
     {
       lock (_configLock)
       {
-        _config.KeepAlive = value == null ? null :
-            new KeepAliveConfig
-            {
-              Enabled = value.Enabled,
-              IntervalSeconds = value.IntervalSeconds,
-              Message = value.Message,
-              ResponsePredicate = value.ResponsePredicate
-            };
+        _config.KeepAlive = value?.Clone();
 
         if (IsConnected)
         {
@@ -642,32 +688,14 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     {
       lock (_configLock)
       {
-        return _config.RetryPolicy == null ? null :
-            new RetryPolicy
-            {
-              MaxRetryCount = _config.RetryPolicy.MaxRetryCount,
-              RetryDelayStrategy = _config.RetryPolicy.RetryDelayStrategy,
-              InitialDelayMs = _config.RetryPolicy.InitialDelayMs,
-              MaxDelayMs = _config.RetryPolicy.MaxDelayMs,
-              FailOnTimeout = _config.RetryPolicy.FailOnTimeout,
-              FailOnErrorResponse = _config.RetryPolicy.FailOnErrorResponse
-            };
+        return _config.RetryPolicy?.Clone();
       }
     }
     set
     {
       lock (_configLock)
       {
-        _config.RetryPolicy = value == null ? null :
-            new RetryPolicy
-            {
-              MaxRetryCount = value.MaxRetryCount,
-              RetryDelayStrategy = value.RetryDelayStrategy,
-              InitialDelayMs = value.InitialDelayMs,
-              MaxDelayMs = value.MaxDelayMs,
-              FailOnTimeout = value.FailOnTimeout,
-              FailOnErrorResponse = value.FailOnErrorResponse
-            };
+        _config.RetryPolicy = value?.Clone();
 
         if (_config.RetryPolicy != null)
         {
@@ -691,32 +719,14 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     {
       lock (_configLock)
       {
-        return _config.ConnectionRetryPolicy == null ? null :
-            new RetryPolicy
-            {
-              MaxRetryCount = _config.ConnectionRetryPolicy.MaxRetryCount,
-              RetryDelayStrategy = _config.ConnectionRetryPolicy.RetryDelayStrategy,
-              InitialDelayMs = _config.ConnectionRetryPolicy.InitialDelayMs,
-              MaxDelayMs = _config.ConnectionRetryPolicy.MaxDelayMs,
-              FailOnTimeout = _config.ConnectionRetryPolicy.FailOnTimeout,
-              FailOnErrorResponse = _config.ConnectionRetryPolicy.FailOnErrorResponse
-            };
+        return _config.ConnectionRetryPolicy?.Clone();
       }
     }
     set
     {
       lock (_configLock)
       {
-        _config.ConnectionRetryPolicy = value == null ? null :
-            new RetryPolicy
-            {
-              MaxRetryCount = value.MaxRetryCount,
-              RetryDelayStrategy = value.RetryDelayStrategy,
-              InitialDelayMs = value.InitialDelayMs,
-              MaxDelayMs = value.MaxDelayMs,
-              FailOnTimeout = value.FailOnTimeout,
-              FailOnErrorResponse = value.FailOnErrorResponse
-            };
+        _config.ConnectionRetryPolicy = value?.Clone();
 
         if (_config.ConnectionRetryPolicy != null)
         {
@@ -843,6 +853,11 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     StopKeepAlive();
+    lock (_reconnectLock)
+    {
+      _reconnectCts?.Dispose();
+      _reconnectCts = null;
+    }
     _disposed = true;
   }
 
@@ -861,6 +876,11 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     StopKeepAlive();
+    lock (_reconnectLock)
+    {
+      _reconnectCts?.Dispose();
+      _reconnectCts = null;
+    }
     _disposed = true;
   }
 

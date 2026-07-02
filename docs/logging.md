@@ -26,7 +26,12 @@ services.AddDnbnNet(configuration);
 
 ## メッセージ送受信ログ
 
-サーバー設定またはクライアント設定で `EnableMessageLogging` を有効にします。
+送受信した電文の内容は、常に以下のレベルでログ出力されます。
+
+- `EnableMessageLogging: true` の場合: `Information` レベル
+- `EnableMessageLogging: false`（既定）の場合: `Debug` レベル
+
+サーバー設定またはクライアント設定で `EnableMessageLogging` を有効にすると、既定のログレベル設定（`Information` 以上）でも電文内容が出力されるようになります。
 
 ```json
 {
@@ -34,5 +39,12 @@ services.AddDnbnNet(configuration);
 }
 ```
 
-アプリ側のログレベルも、該当カテゴリのログが出る設定にしてください。
+`false` のままでも、アプリ側で該当カテゴリのログレベルを `Debug` まで下げれば従来どおり出力されます。
+
+## 接続・切断・再接続のログ
+
+接続、切断、再接続試行のログには相手先の識別情報が含まれます。
+
+- クライアント側: 接続先の `host:port`（例: `TCP Client 'MainClient' disconnected from 192.168.1.10:5000`）
+- サーバー側: セッションID（接続元の `IP:Port` を含む）と接続元エンドポイント
 

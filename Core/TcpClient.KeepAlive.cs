@@ -14,6 +14,17 @@ partial class TcpClient
         return;
       }
 
+      if (_config.KeepAlive.ResponsePredicate == null)
+      {
+        // 述語未設定時はKeepAlive待機中に届いた任意の受信メッセージを応答として扱うため、
+        // 通常のリクエスト応答を横取りする可能性がある（互換性のため挙動は維持）
+        _logger?.LogWarning(
+            "TCP Client '{Name}' KeepAlive is enabled without ResponsePredicate. " +
+            "While a keep-alive is pending, any received message will be consumed as the keep-alive response, " +
+            "which may steal responses to in-flight SendAsync requests. " +
+            "Set KeepAliveConfig.ResponsePredicate to distinguish keep-alive responses.", Name);
+      }
+
       // 既存のループを停止
       StopKeepAlive();
 

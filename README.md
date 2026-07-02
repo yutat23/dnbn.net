@@ -239,7 +239,7 @@ KeepAlive 応答は `OnKeepAliveResponseReceived` で受け取れます。
 }
 ```
 
-`EnableMessageLogging` はサーバー設定とクライアント設定の両方で使えます。実際に出力するにはアプリ側のログレベル設定も必要です。
+`EnableMessageLogging` はサーバー設定とクライアント設定の両方で使えます。`true` の場合は電文内容が `Information` レベルで、`false`（既定）の場合は `Debug` レベルで出力されます。
 
 ## 受信イベントの考え方
 

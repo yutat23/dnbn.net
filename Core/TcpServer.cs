@@ -38,10 +38,12 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   /// </summary>
   public string Name => _config.Name;
 
+  private volatile bool _isRunning;
+
   /// <summary>
   /// 実行状態
   /// </summary>
-  public bool IsRunning => _listener != null;
+  public bool IsRunning => _isRunning;
 
   /// <summary>
   /// メッセージ受信イベント
@@ -109,12 +111,14 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       if (!_cancellationTokenSource.IsCancellationRequested)
       {
         _cancellationTokenSource.Cancel();
+        _isRunning = false;
         _listener?.Stop();
       }
     });
 
     _listener = new TcpListener(IPAddress.Any, _config.ListenPort);
     _listener.Start();
+    _isRunning = true;
     lock (_statsLock)
     {
       _startedAt = DateTime.UtcNow;
@@ -142,6 +146,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     _externalCancellationTokenRegistration = null;
 
     _cancellationTokenSource.Cancel();
+    _isRunning = false;
     _listener?.Stop();
     _listener = null;
 
@@ -149,7 +154,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     var sessions = _sessions.Values.ToList();
     foreach (var session in sessions)
     {
-      await session.DisconnectAsync();
+      await session.DisconnectAsync().ConfigureAwait(false);
     }
     _sessions.Clear();
 
@@ -200,7 +205,9 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     {
       SessionId = sessionId,
       SourceEndpoint = remoteEndPoint,
+      // RemoteEndpointにローカル側が入っているのは歴史的経緯（互換性のため維持）
       RemoteEndpoint = (IPEndPoint)tcpClient.Client.LocalEndPoint!,
+      LocalEndpoint = (IPEndPoint)tcpClient.Client.LocalEndPoint!,
       ConnectedAt = DateTime.UtcNow
     };
 
@@ -228,6 +235,8 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         _lastClientDisconnectedAt = DateTime.UtcNow;
       }
       OnClientDisconnected?.Invoke(this, sessionInfo);
+      // セッションが保持するリソース（CTS・セマフォ）を解放
+      session.Dispose();
     };
 
     session.OnError += (ex) =>
@@ -244,9 +253,12 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       _lastClientConnectedAt = DateTime.UtcNow;
     }
 
+    _logger?.LogInformation("TCP Server '{Name}' client connected: session {SessionId} from {RemoteEndPoint}",
+        Name, sessionId, remoteEndPoint);
+
     OnClientConnected?.Invoke(this, sessionInfo);
 
-    await session.StartAsync();
+    await session.StartAsync().ConfigureAwait(false);
   }
 
   private string GenerateSessionId(IPEndPoint endPoint)
@@ -418,6 +430,13 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     private readonly CancellationTokenSource _cancellationTokenSource = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private bool _disposed = false;
+    private int _disconnectState; // 0: 未切断, 1: 切断済み（二重切断・二重ログ防止）
+
+    /// <summary>
+    /// 電文内容ログの出力レベル。
+    /// EnableMessageLogging有効時はInformation、無効時は従来どおりDebugで出力する
+    /// </summary>
+    private LogLevel MessageLogLevel => _config.EnableMessageLogging ? LogLevel.Information : LogLevel.Debug;
 
     public SessionInfo SessionInfo => _sessionInfo;
 
@@ -492,8 +511,8 @@ public class TcpServer : ITcpServer, IAsyncDisposable
               filteredMessage = await filter.OnReceivedAsync(filteredMessage, ctx);
             }
 
-            // メッセージログ出力
-            _logger?.LogDebug("TCP Server '{Name}' received message from session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
+            // メッセージログ出力（EnableMessageLogging有効時はInformationレベル）
+            _logger?.Log(MessageLogLevel, "TCP Server '{Name}' received message from session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
 
             OnMessageReceived?.Invoke(filteredMessage);
           }
@@ -532,43 +551,57 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
       }
 
-      // メッセージログ出力
-      _logger?.LogDebug("TCP Server '{Name}' sending message to session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
+      // メッセージログ出力（EnableMessageLogging有効時はInformationレベル）
+      _logger?.Log(MessageLogLevel, "TCP Server '{Name}' sending message to session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
 
       // MessageTerminatorを自動的に追加
       var data = TcpMessageUtils.AppendMessageTerminatorIfNeeded(filteredMessage, _config.MessageTerminator, _config.Encoding);
 
-      // 外部CancellationTokenと内部CancellationTokenSourceを統合
-      using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
-      await _sendLock.WaitAsync(linkedCts.Token);
       try
       {
-        await _stream.WriteAsync(data, linkedCts.Token);
-        await _stream.FlushAsync(linkedCts.Token);
+        // 外部CancellationTokenと内部CancellationTokenSourceを統合
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
+        await _sendLock.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+        try
+        {
+          await _stream.WriteAsync(data, linkedCts.Token).ConfigureAwait(false);
+          await _stream.FlushAsync(linkedCts.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+          _sendLock.Release();
+        }
       }
-      finally
+      catch (ObjectDisposedException)
       {
-        _sendLock.Release();
+        // 切断処理と競合してCTS/セマフォが破棄された場合は「未接続」として扱う
+        throw new InvalidOperationException("Not connected");
       }
     }
 
     public async Task DisconnectAsync(bool isIntentional = true)
     {
+      // 受信ループ起因の切断とStopAsync/Disposeからの切断が重複しても一度だけ実行する
+      if (Interlocked.Exchange(ref _disconnectState, 1) == 1)
+      {
+        return;
+      }
+
       _cancellationTokenSource.Cancel();
       if (_stream != null)
       {
-        await _stream.DisposeAsync();
+        await _stream.DisposeAsync().ConfigureAwait(false);
         _stream = null;
       }
       _tcpClient?.Dispose();
 
       if (isIntentional)
       {
-        _logger?.LogInformation("Session {SessionId} disconnected", _sessionId);
+        _logger?.LogInformation("TCP Server '{Name}' session {SessionId} disconnected", _config.Name, _sessionId);
       }
       else
       {
-        _logger?.LogError("Session {SessionId} disconnected unexpectedly (network error)", _sessionId);
+        _logger?.LogError("TCP Server '{Name}' session {SessionId} disconnected unexpectedly (network error)", _config.Name, _sessionId);
       }
     }
 
@@ -580,6 +613,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       }
 
       // ConfigureAwait(false)を使用してデッドロックを回避
+      // （切断済みの場合は即座に完了する）
       DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
       _tcpClient.Dispose();
       _cancellationTokenSource.Dispose();

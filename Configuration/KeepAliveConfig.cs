@@ -26,4 +26,18 @@ public class KeepAliveConfig
   [System.Text.Json.Serialization.JsonIgnore]
   [System.Xml.Serialization.XmlIgnore]
   public Func<Dnbn.Models.Message, bool>? ResponsePredicate { get; set; }
+
+  /// <summary>
+  /// この設定の複製を作成
+  /// </summary>
+  public KeepAliveConfig Clone()
+  {
+    return new KeepAliveConfig
+    {
+      Enabled = Enabled,
+      IntervalSeconds = IntervalSeconds,
+      Message = Message,
+      ResponsePredicate = ResponsePredicate
+    };
+  }
 }

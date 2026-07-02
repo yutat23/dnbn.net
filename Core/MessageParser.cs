@@ -11,7 +11,7 @@ namespace Dnbn.Core;
 public class MessageParser
 {
   private readonly Encoding _encoding;
-  private readonly string[]? _messageTerminators;
+  private readonly byte[][]? _terminatorBytes;
   private readonly int? _fixedHeaderLength;
   private readonly int? _fixedBodyLength;
   private readonly int? _lengthFieldOffset;
@@ -60,7 +60,11 @@ public class MessageParser
       int? maxReceiveBufferBytes)
   {
     _encoding = encoding;
-    _messageTerminators = messageTerminators;
+    // 終端文字のバイト列はパースのたびにエンコードせず事前計算しておく
+    _terminatorBytes = messageTerminators?
+        .Where(t => !string.IsNullOrEmpty(t))
+        .Select(encoding.GetBytes)
+        .ToArray();
     _fixedHeaderLength = fixedHeaderLength;
     _fixedBodyLength = fixedBodyLength;
     _lengthFieldOffset = lengthFieldOffset;
@@ -106,20 +110,14 @@ public class MessageParser
     byte[]? messageData = null;
 
     // 終端文字方式（複数の終端文字候補をサポート）
-    if (_messageTerminators != null && _messageTerminators.Length > 0)
+    if (_terminatorBytes != null && _terminatorBytes.Length > 0)
     {
       int earliestIndex = int.MaxValue;
       byte[]? matchedTerminatorBytes = null;
 
       // すべての終端文字候補をチェックし、最も早く見つかったものを使用
-      foreach (var terminator in _messageTerminators)
+      foreach (var terminatorBytes in _terminatorBytes)
       {
-        if (string.IsNullOrEmpty(terminator))
-        {
-          continue;
-        }
-
-        var terminatorBytes = _encoding.GetBytes(terminator);
         var terminatorIndex = FindSequence(_buffer, terminatorBytes);
 
         if (terminatorIndex >= 0 && terminatorIndex < earliestIndex)
@@ -151,7 +149,13 @@ public class MessageParser
       if (_buffer.Count >= headerLen)
       {
         var bodyLength = ExtractLengthFromSpan(CollectionsMarshal.AsSpan(_buffer).Slice(0, headerLen), _lengthFieldOffset.Value, _lengthFieldLength.Value);
+        if (bodyLength > int.MaxValue - headerLen)
+        {
+          throw new InvalidOperationException(
+            $"Declared body length {bodyLength} is too large (header {headerLen} bytes). The stream may be corrupted or misconfigured.");
+        }
         var totalLength = headerLen + bodyLength;
+        ThrowIfExceedsMaxBuffer(totalLength);
 
         if (_buffer.Count >= totalLength)
         {
@@ -167,6 +171,15 @@ public class MessageParser
       {
         var span = CollectionsMarshal.AsSpan(_buffer).Slice(_lengthFieldOffset.Value, _lengthFieldLength.Value);
         var totalLength = ExtractLengthFromSpan(span);
+
+        // 宣言された全長が長さフィールド領域より小さい場合、0バイト抽出の無限ループや
+        // ストリーム破損の連鎖につながるため、プロトコルエラーとして扱う
+        if (totalLength < minLen)
+        {
+          throw new InvalidOperationException(
+            $"Declared message length {totalLength} is smaller than the length field region ({minLen} bytes). The stream may be corrupted or misconfigured.");
+        }
+        ThrowIfExceedsMaxBuffer(totalLength);
 
         if (_buffer.Count >= totalLength)
         {
@@ -238,9 +251,26 @@ public class MessageParser
     }
     if (bytes.Length == 4)
     {
-      return (int)BinaryPrimitives.ReadUInt32BigEndian(bytes);
+      var value = BinaryPrimitives.ReadUInt32BigEndian(bytes);
+      if (value > int.MaxValue)
+      {
+        // intへのキャストで負数になり、以降のバッファ操作が破綻するため明示的に拒否する
+        throw new InvalidOperationException(
+          $"Length field value {value} exceeds the supported maximum ({int.MaxValue}). The stream may be corrupted or misconfigured.");
+      }
+      return (int)value;
     }
     throw new ArgumentException($"Unsupported length field size: {bytes.Length}");
+  }
+
+  private void ThrowIfExceedsMaxBuffer(int totalLength)
+  {
+    if (_maxReceiveBufferBytes.HasValue && _maxReceiveBufferBytes.Value > 0 && totalLength > _maxReceiveBufferBytes.Value)
+    {
+      throw new InvalidOperationException(
+        $"Declared message length {totalLength} exceeds maximum of {_maxReceiveBufferBytes.Value} bytes. " +
+        "Increase MaxReceiveBufferBytes or verify the protocol configuration.");
+    }
   }
 
   /// <summary>

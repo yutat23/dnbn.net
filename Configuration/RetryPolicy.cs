@@ -52,6 +52,22 @@ public class RetryPolicy
   public bool FailOnErrorResponse { get; set; } = true;
 
   /// <summary>
+  /// このポリシーの複製を作成
+  /// </summary>
+  public RetryPolicy Clone()
+  {
+    return new RetryPolicy
+    {
+      MaxRetryCount = MaxRetryCount,
+      RetryDelayStrategy = RetryDelayStrategy,
+      InitialDelayMs = InitialDelayMs,
+      MaxDelayMs = MaxDelayMs,
+      FailOnTimeout = FailOnTimeout,
+      FailOnErrorResponse = FailOnErrorResponse
+    };
+  }
+
+  /// <summary>
   /// リトライ回数に応じた遅延時間を計算
   /// </summary>
   public int GetDelayMs(int retryCount)

@@ -25,16 +25,19 @@ partial class TcpClient
         _stats.LastRetryAttemptAt = DateTime.UtcNow;
       }
 
+      // 再接続用のCancellationTokenSourceを作成
+      // 元の_cancellationTokenSourceはDisconnectAsyncでキャンセルされているため、
+      // 再接続処理では新しいトークンを使用する。
+      // フィールドに保持することで、意図的な切断やDisposeで再接続を中断できる
+      _reconnectCts?.Dispose();
+      _reconnectCts = new CancellationTokenSource();
+      var reconnectCts = _reconnectCts;
+
       _reconnectTask = Task.Run(async () =>
       {
         try
         {
-          _logger?.LogInformation("TCP Client '{Name}' attempting automatic reconnection...", Name);
-
-          // 再接続用のCancellationTokenSourceを作成
-          // 元の_cancellationTokenSourceはDisconnectAsyncでキャンセルされているため、
-          // 再接続処理では新しいトークンを使用する
-          using var reconnectCts = new CancellationTokenSource();
+          _logger?.LogInformation("TCP Client '{Name}' attempting automatic reconnection to {Host}:{Port}...", Name, _config.RemoteHost, _config.RemotePort);
 
           _logger?.LogDebug("TCP Client '{Name}' starting connection retry with policy: MaxRetryCount={MaxRetryCount}",
                     Name, _config.ConnectionRetryPolicy?.MaxRetryCount ?? -1);
@@ -49,38 +52,21 @@ partial class TcpClient
                       }
 
                       // トランスポートを再接続
-                      await _transport.ConnectAsync(reconnectCts.Token);
-                      lock (_statsLock)
-                      {
-                        _stats.ConnectedAt = DateTime.UtcNow;
-                        _stats.ConnectionRetryAttempts = 0; // 再接続成功時にリセット
-                      }
-                      _logger?.LogInformation("TCP Client '{Name}' reconnected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
+                      await _transport.ConnectAsync(reconnectCts.Token).ConfigureAwait(false);
 
                       ResetConnectionStateForConnect();
 
-                      OnConnected?.Invoke(this, EventArgs.Empty);
-
-                      // 送信ループを再開
-                      _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
-
-                      // 受信ループを再開
-                      _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
-
-                      // キープアライブを再開
-                      if (_config.KeepAlive?.Enabled == true)
-                      {
-                        StartKeepAlive();
-                      }
+                      OnTransportConnected(isReconnect: true);
                     },
                     _config.ConnectionRetryPolicy,
                     reconnectCts.Token,
                     _logger,
-                    onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } });
+                    onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } },
+                    targetDescription: RetryLogTarget).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-          _logger?.LogInformation("TCP Client '{Name}' reconnection cancelled", Name);
+          _logger?.LogInformation("TCP Client '{Name}' reconnection to {Host}:{Port} cancelled", Name, _config.RemoteHost, _config.RemotePort);
         }
         catch (Exception ex)
         {
@@ -91,7 +77,7 @@ partial class TcpClient
             _stats.LastError = ex.Message;
             _stats.LastErrorAt = DateTime.UtcNow;
           }
-          _logger?.LogError(ex, "TCP Client '{Name}' automatic reconnection failed", Name);
+          _logger?.LogError(ex, "TCP Client '{Name}' automatic reconnection to {Host}:{Port} failed", Name, _config.RemoteHost, _config.RemotePort);
           OnError?.Invoke(this, ex);
         }
       });

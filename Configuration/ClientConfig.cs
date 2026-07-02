@@ -92,6 +92,12 @@ public class ClientConfig
   public bool EnableMessageLogging { get; set; } = false;
 
   /// <summary>
+  /// 送信キューの最大サイズ。キューが満杯の場合、送信呼び出しは空きが出るまで待機する。
+  /// 既定値: 1000
+  /// </summary>
+  public int SendQueueCapacity { get; set; } = 1000;
+
+  /// <summary>
   /// 受信バッファの最大バイト数（未設定または0以下は無制限）。
   /// 終端文字・長さフィールドが未設定のプロトコルではバッファが無制限に伸びるリスクがあるため、
   /// 任意で上限を設定することでメモリ枯渇を防げる。

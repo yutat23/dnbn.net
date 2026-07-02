@@ -18,9 +18,18 @@ public class SessionInfo
   public IPEndPoint SourceEndpoint { get; set; } = null!;
 
   /// <summary>
-  /// リモートエンドポイント（接続先）
+  /// リモートエンドポイント。
+  /// 注意: 歴史的経緯により、サーバー側セッションではローカル（サーバー自身）の
+  /// エンドポイントが格納されている。互換性のため値は変更していない。
+  /// 接続相手のエンドポイントは <see cref="SourceEndpoint"/>、
+  /// サーバー自身のエンドポイントは <see cref="LocalEndpoint"/> を使用すること。
   /// </summary>
   public IPEndPoint? RemoteEndpoint { get; set; }
+
+  /// <summary>
+  /// ローカル（自分側）のエンドポイント
+  /// </summary>
+  public IPEndPoint? LocalEndpoint { get; set; }
 
   /// <summary>
   /// 接続開始時刻

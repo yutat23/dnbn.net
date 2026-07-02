@@ -36,8 +36,9 @@ partial class TcpClient
             filteredMessage = await filter.OnReceivedAsync(filteredMessage, ctx);
           }
 
-          // メッセージログ出力
-          _logger?.LogDebug("TCP Client '{Name}' received message: {MessageText}", Name, filteredMessage.Text?.Trim());
+          // メッセージログ出力（EnableMessageLogging有効時はInformationレベル）
+          _logger?.Log(MessageLogLevel, "TCP Client '{Name}' received message from {Host}:{Port}: {MessageText}",
+              Name, _config.RemoteHost, _config.RemotePort, filteredMessage.Text?.Trim());
 
           // 統計情報を更新
           Interlocked.Increment(ref _stats.MessagesReceived);
@@ -172,7 +173,7 @@ partial class TcpClient
     // 再接続時には新しいCancellationTokenSourceが必要
     if (wasNetworkError && _config.ConnectionRetryPolicy != null)
     {
-      _logger?.LogInformation("TCP Client '{Name}' will attempt automatic reconnection...", Name);
+      _logger?.LogInformation("TCP Client '{Name}' will attempt automatic reconnection to {Host}:{Port}...", Name, _config.RemoteHost, _config.RemotePort);
       StartAutoReconnect();
     }
   }
