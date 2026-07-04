@@ -199,6 +199,8 @@ public class TcpServer : ITcpServer, IAsyncDisposable
 
   private async Task HandleClientAsync(System.Net.Sockets.TcpClient tcpClient)
   {
+    TcpKeepAliveHelper.Apply(tcpClient.Client, _config.TcpKeepAlive);
+
     var remoteEndPoint = (IPEndPoint)tcpClient.Client.RemoteEndPoint!;
     var sessionId = GenerateSessionId(remoteEndPoint);
     var sessionInfo = new SessionInfo

@@ -82,6 +82,13 @@ public class ServerConfig
   /// 任意で上限を設定することでメモリ枯渇を防げる。
   /// </summary>
   public int? MaxReceiveBufferBytes { get; set; }
+
+  /// <summary>
+  /// TCPレベルのキープアライブ設定（ソケットオプション SO_KEEPALIVE）。
+  /// 接続を受け付けたクライアントソケットに適用される。
+  /// 未設定（null）の場合は従来どおりOSの既定動作。
+  /// </summary>
+  public TcpKeepAliveConfig? TcpKeepAlive { get; set; }
 }
 
 

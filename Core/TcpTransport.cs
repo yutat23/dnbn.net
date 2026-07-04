@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using Dnbn.Configuration;
 
 namespace Dnbn.Core;
 
@@ -11,6 +12,7 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
   private NetworkStream? _stream;
   private readonly string _host;
   private readonly int _port;
+  private readonly TcpKeepAliveConfig? _tcpKeepAlive;
 
   /// <summary>
   /// コンストラクタ
@@ -18,9 +20,21 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
   /// <param name="host">接続先ホスト名</param>
   /// <param name="port">接続先ポート番号</param>
   public TcpTransport(string host, int port)
+      : this(host, port, null)
+  {
+  }
+
+  /// <summary>
+  /// コンストラクタ
+  /// </summary>
+  /// <param name="host">接続先ホスト名</param>
+  /// <param name="port">接続先ポート番号</param>
+  /// <param name="tcpKeepAlive">TCPレベルのキープアライブ設定（null=OSの既定動作）</param>
+  public TcpTransport(string host, int port, TcpKeepAliveConfig? tcpKeepAlive)
   {
     _host = host;
     _port = port;
+    _tcpKeepAlive = tcpKeepAlive;
   }
 
   /// <summary>
@@ -43,6 +57,7 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
 
     _tcpClient = new System.Net.Sockets.TcpClient();
     await _tcpClient.ConnectAsync(_host, _port, cancellationToken);
+    TcpKeepAliveHelper.Apply(_tcpClient.Client, _tcpKeepAlive);
     _stream = _tcpClient.GetStream();
   }
 

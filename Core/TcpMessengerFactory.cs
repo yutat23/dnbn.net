@@ -54,7 +54,7 @@ public class TcpMessengerFactory : ITcpMessengerFactory
     var clientConfig = _config.Clients.FirstOrDefault(c => c.Name == name)
         ?? throw new ArgumentException($"Client configuration '{name}' not found", nameof(name));
 
-    var transport = new TcpTransport(clientConfig.RemoteHost, clientConfig.RemotePort);
+    var transport = new TcpTransport(clientConfig.RemoteHost, clientConfig.RemotePort, clientConfig.TcpKeepAlive);
     var logger = _loggerFactory?.CreateLogger<TcpClient>();
     return new TcpClient(clientConfig, transport, logger, _filters);
   }

@@ -51,9 +51,15 @@ public class ClientConfig
   public int TimeoutMilliseconds { get; set; } = 5000;
 
   /// <summary>
-  /// キープアライブ設定
+  /// キープアライブ設定（アプリケーションレベル：電文送信による死活監視）
   /// </summary>
   public KeepAliveConfig? KeepAlive { get; set; }
+
+  /// <summary>
+  /// TCPレベルのキープアライブ設定（ソケットオプション SO_KEEPALIVE）。
+  /// 未設定（null）の場合は従来どおりOSの既定動作。
+  /// </summary>
+  public TcpKeepAliveConfig? TcpKeepAlive { get; set; }
 
   /// <summary>
   /// 通知電文の判定述語。マッチした受信メッセージは応答マッチングをスキップして

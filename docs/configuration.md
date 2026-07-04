@@ -32,6 +32,7 @@
 | `LengthFieldLength` | `int?` | `null` | 長さフィールドのバイト数 |
 | `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ（`true`: Information、`false`: Debug レベルで出力） |
 | `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。未設定または0以下は無制限 |
+| `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCPレベルのキープアライブ設定（接続を受け付けたクライアントソケットに適用） |
 
 ## ClientConfig
 
@@ -49,7 +50,8 @@
 | `ConnectionRetryPolicy` | `RetryPolicy?` | `null` | 接続失敗/切断時の再接続リトライ |
 | `TimeoutMilliseconds` | `int` | `5000` | `SendAsync` の既定タイムアウト |
 | `SendQueueCapacity` | `int` | `1000` | 送信キューの最大サイズ。満杯時は送信呼び出しが空き待ちになる |
-| `KeepAlive` | `KeepAliveConfig?` | `null` | KeepAlive設定 |
+| `KeepAlive` | `KeepAliveConfig?` | `null` | KeepAlive設定（アプリケーションレベル：電文送信による死活監視） |
+| `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCPレベルのキープアライブ設定 |
 | `FixedHeaderLength` | `int?` | `null` | 固定長/長さフィールド方式のヘッダ長 |
 | `FixedBodyLength` | `int?` | `null` | 固定長方式のボディ長 |
 | `LengthFieldOffset` | `int?` | `null` | ヘッダ内の長さフィールド開始位置 |
@@ -79,6 +81,39 @@
 | `Message` | `string` | `""` | 送信するKeepAliveメッセージ |
 
 `ResponsePredicate` はコードから設定するプロパティです。JSON/XML設定には含められません。
+
+## TcpKeepAliveConfig
+
+OSのTCPスタックが行うキープアライブ（ソケットオプション `SO_KEEPALIVE`）の設定です。無通信状態が続いてもNW障害・タイムアウトによる切断をOSレベルで検知できるようになり、`SendAsync` 時に初めてエラーになるのを防ぎやすくなります。電文を送信する `KeepAliveConfig`（アプリケーションレベル）とは独立しており、併用もできます。
+
+| プロパティ | 型 | 既定値 | 説明 |
+|---|---:|---:|---|
+| `Enabled` | `bool` | `false` | TCPキープアライブを有効にする |
+| `TimeSeconds` | `int` | `60` | 無通信状態から最初のプローブ送信までの時間（秒） |
+| `IntervalSeconds` | `int` | `10` | プローブの再送間隔（秒） |
+| `RetryCount` | `int` | `5` | 接続断と判定するまでのプローブ再送回数 |
+
+未設定（`null`）の場合は従来どおりOSの既定動作です。`TimeSeconds` / `IntervalSeconds` / `RetryCount` の細かい制御がOSでサポートされていない環境では、基本のキープアライブ有効化のみが行われます。
+
+```json
+{
+  "dnbn.net": {
+    "Clients": [
+      {
+        "Name": "MyClient",
+        "RemoteHost": "192.168.1.10",
+        "RemotePort": 5000,
+        "TcpKeepAlive": {
+          "Enabled": true,
+          "TimeSeconds": 60,
+          "IntervalSeconds": 10,
+          "RetryCount": 5
+        }
+      }
+    ]
+  }
+}
+```
 
 ## WebUIConfig
 
