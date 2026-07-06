@@ -54,9 +54,18 @@ partial class TcpClient
                       // トランスポートを再接続
                       await _transport.ConnectAsync(reconnectCts.Token).ConfigureAwait(false);
 
-                      ResetConnectionStateForConnect();
+                      // 状態リセットとループ起動は切断処理・旧ループの後始末と直列化する
+                      await _disconnectLock.WaitAsync(reconnectCts.Token).ConfigureAwait(false);
+                      try
+                      {
+                        ResetConnectionStateForConnect();
 
-                      OnTransportConnected(isReconnect: true);
+                        OnTransportConnected(isReconnect: true);
+                      }
+                      finally
+                      {
+                        _disconnectLock.Release();
+                      }
                     },
                     _config.ConnectionRetryPolicy,
                     reconnectCts.Token,

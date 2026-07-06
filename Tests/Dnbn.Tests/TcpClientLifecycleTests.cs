@@ -28,8 +28,8 @@ public class TcpClientLifecycleTests
 
   /// <summary>
   /// 受信ループが ReceiveAsync に到達したことを検知できるトランスポートラッパー。
-  /// 受信ループ起動前に切断をシミュレートすると wasNetworkError が立たず
-  /// 自動再接続が発動しないため、切断タイミングを決定的に制御するのに使用する。
+  /// 「受信待ち中のNW障害」のタイミングを決定的に制御するのに使用する
+  /// （受信ループ起動前の障害は AutoReconnect_WhenConnectionDropsBeforeReceiveLoopStarts が対象）。
   /// </summary>
   private sealed class ReceiveTrackingTransport : ITransport
   {
@@ -55,21 +55,15 @@ public class TcpClientLifecycleTests
   // 手動再接続（Connect → Disconnect → Connect）
   // ---------------------------------------------------------------------------
 
-  // 既知の競合（要修正）: DisconnectAsync は受信ループの完了を待たないため、
-  // 切断直後に再接続すると旧受信ループの後始末処理（if (IsConnected) → DisconnectAsync）が
-  // 新しい接続を巻き添えで切断することがある。
-  // ライブラリ側で受信ループの完了待ちが実装されたら、このテスト群の整定待ち（Task.Delay）は削除すること。
-  private static Task WaitForStaleReceiveLoopTeardownAsync() => Task.Delay(100);
-
   [Fact]
   public async Task Reconnect_AfterDisconnect_SendAndReceiveWork()
   {
     var transport = new MockTransport();
     await using var client = new TcpClient(CreateConfig(), transport);
 
+    // DisconnectAsync は受信ループの完了を待つため、整定待ちなしで即時再接続できること
     await client.ConnectAsync();
     await client.DisconnectAsync();
-    await WaitForStaleReceiveLoopTeardownAsync();
     await client.ConnectAsync();
 
     // 再接続後に送信ループ・受信ループが機能していること（IsConnected だけでは不十分）
@@ -100,9 +94,6 @@ public class TcpClientLifecycleTests
 
       await client.DisconnectAsync();
       Assert.False(client.IsConnected);
-
-      // 既知の競合: 旧受信ループの後始末が新接続を切断しないよう整定を待つ（クラス先頭のコメント参照）
-      await WaitForStaleReceiveLoopTeardownAsync();
     }
   }
 
@@ -172,6 +163,43 @@ public class TcpClientLifecycleTests
     var sendTask = client.SendAsync(Message.FromString("after_reconnect", Encoding.UTF8), TimeSpan.FromSeconds(3));
     await TestWait.UntilSentAsync(mock, "after_reconnect");
     mock.EnqueueReceiveData("ok");
+    var response = await sendTask;
+    Assert.Equal("ok", response.Text?.Trim());
+  }
+
+  [Fact]
+  public async Task AutoReconnect_WhenConnectionDropsBeforeReceiveLoopStarts()
+  {
+    // デッドウィンドウの回帰テスト:
+    // 接続完了直後（受信ループが最初の ReceiveAsync に入る前）にNW障害が起きた場合でも
+    // 自動再接続が発動すること
+    var transport = new MockTransport();
+    transport.DropConnectionAfterNextConnect();
+
+    var policy = new RetryPolicy { MaxRetryCount = 5, InitialDelayMs = 10 };
+    await using var client = new TcpClient(CreateConfig(connectionRetryPolicy: policy), transport);
+
+    var reconnectedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    int connectedCount = 0;
+    client.OnConnected += (_, _) =>
+    {
+      if (Interlocked.Increment(ref connectedCount) >= 2)
+      {
+        reconnectedTcs.TrySetResult();
+      }
+    };
+
+    // 1回目の接続は成功直後に切断される（transportの設定による）
+    await client.ConnectAsync();
+
+    // 自動再接続により復帰すること
+    await reconnectedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Assert.True(client.IsConnected);
+
+    // 復帰後に送受信が機能すること
+    var sendTask = client.SendAsync(Message.FromString("recovered", Encoding.UTF8), TimeSpan.FromSeconds(3));
+    await TestWait.UntilSentAsync(transport, "recovered");
+    transport.EnqueueReceiveData("ok");
     var response = await sendTask;
     Assert.Equal("ok", response.Text?.Trim());
   }

@@ -13,6 +13,19 @@ internal class MockTransport : ITransport
   private readonly List<byte[]> _sentData = new();
   private readonly object _sentLock = new();
   private Exception? _connectException;
+  private bool _dropAfterNextConnect;
+  private int _connectCalls;
+
+  /// <summary>ConnectAsync が呼ばれた回数</summary>
+  public int ConnectCalls => Volatile.Read(ref _connectCalls);
+
+  /// <summary>
+  /// 次の ConnectAsync 成功直後に IsConnected を false にする（1回だけ）。
+  /// 「接続完了直後〜受信ループが最初の ReceiveAsync に入る前のNW障害」を
+  /// 決定的に再現するために使用する。受信チャンネルは閉じない
+  /// （閉じると 0 バイト受信の通常NW障害パスになってしまうため）。
+  /// </summary>
+  public void DropConnectionAfterNextConnect() => _dropAfterNextConnect = true;
 
   /// <inheritdoc />
   public bool IsConnected => _connected;
@@ -33,6 +46,7 @@ internal class MockTransport : ITransport
   public Task ConnectAsync(CancellationToken cancellationToken = default)
   {
     cancellationToken.ThrowIfCancellationRequested();
+    Interlocked.Increment(ref _connectCalls);
     if (_connectException != null)
     {
       var ex = _connectException;
@@ -44,6 +58,12 @@ internal class MockTransport : ITransport
       _receiveChannel = Channel.CreateUnbounded<byte[]>();
     }
     _connected = true;
+    if (_dropAfterNextConnect)
+    {
+      // 接続成功の直後に切断された状態を再現（デッドウィンドウ再現用）
+      _dropAfterNextConnect = false;
+      _connected = false;
+    }
     return Task.CompletedTask;
   }
 

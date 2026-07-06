@@ -5,16 +5,23 @@ namespace Dnbn.Core;
 
 partial class TcpClient
 {
-  private async Task ReceiveLoopAsync()
+  /// <summary>
+  /// 受信ループ本体。切断・キャンセルで終了し、NW障害による終了かどうかを返す。
+  /// 後始末（切断処理・自動再接続）は行わない（HandleReceiveLoopCompletionAsyncが担当）。
+  /// DisconnectAsyncがこのタスクの完了を待機するため、このメソッド内から
+  /// DisconnectAsyncを呼び出してはならない（デッドロックするため）。
+  /// </summary>
+  /// <param name="token">この接続専用のキャンセレーショントークン（再接続でフィールドが差し替わっても影響を受けないよう起動時にキャプチャ）</param>
+  private async Task<bool> ReceiveLoopCoreAsync(CancellationToken token)
   {
     var buffer = new byte[4096];
     bool wasNetworkError = false;
 
-    while (!_cancellationTokenSource.Token.IsCancellationRequested && IsConnected)
+    while (!token.IsCancellationRequested && IsConnected)
     {
       try
       {
-        var bytesRead = await _transport.ReceiveAsync(buffer, 0, buffer.Length, _cancellationTokenSource.Token);
+        var bytesRead = await _transport.ReceiveAsync(buffer, 0, buffer.Length, token);
         if (bytesRead == 0)
         {
           // 接続が閉じられた（NW障害）
@@ -139,7 +146,7 @@ partial class TcpClient
       catch (Exception ex)
       {
         // 意図的な切断の場合はエラーログを出さない
-        if (!_cancellationTokenSource.Token.IsCancellationRequested)
+        if (!token.IsCancellationRequested)
         {
           // エラー統計を更新
           Interlocked.Increment(ref _stats.ErrorCount);
@@ -162,19 +169,77 @@ partial class TcpClient
       }
     }
 
-    if (IsConnected)
+    // ループ本体に一度も入らず終了した場合（接続完了直後〜最初の受信前にNW障害が
+    // 発生し IsConnected=false になったケース）も、キャンセルでも意図的な切断でも
+    // なければNW障害として扱う。これがないと自動再接続が発動しないデッドウィンドウになる。
+    if (!wasNetworkError && !token.IsCancellationRequested && !_isIntentionalDisconnect)
     {
-      // NW障害による切断として扱う
-      await DisconnectAsync(isIntentional: !wasNetworkError);
+      wasNetworkError = true;
+    }
+
+    return wasNetworkError;
+  }
+
+  /// <summary>
+  /// 受信ループ終了後の後始末（切断処理と自動再接続）。
+  /// この処理は受信ループ本体とは別タスクで実行され、接続世代（epoch）ガードにより
+  /// 「旧接続の後始末が、その後に確立された新しい接続を巻き添えで切断する」ことを防ぐ。
+  /// </summary>
+  /// <param name="receiveLoopTask">受信ループ本体のタスク</param>
+  /// <param name="epoch">受信ループ起動時点の接続世代</param>
+  private async Task HandleReceiveLoopCompletionAsync(Task<bool> receiveLoopTask, int epoch)
+  {
+    bool wasNetworkError;
+    try
+    {
+      wasNetworkError = await receiveLoopTask.ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+      // ReceiveLoopCoreAsyncは例外を内部処理するため通常ここには来ないが、安全側でNW障害扱い
+      _logger?.LogError(ex, "Receive loop terminated unexpectedly in client {Name}", Name);
+      wasNetworkError = !_isIntentionalDisconnect;
+    }
+
+    // 既に新しい接続が確立されている場合は何もしない
+    if (Volatile.Read(ref _connectionEpoch) != epoch)
+    {
+      return;
+    }
+
+    if (IsConnected || wasNetworkError)
+    {
+      // NW障害による切断として扱う（epochが変わっていたら中で何もしない）
+      await DisconnectIfCurrentEpochAsync(epoch, isIntentional: !wasNetworkError).ConfigureAwait(false);
     }
 
     // NW障害による切断の場合、自動再接続を試行
-    // 注意: DisconnectAsyncで_cancellationTokenSourceがキャンセルされるため、
-    // 再接続時には新しいCancellationTokenSourceが必要
-    if (wasNetworkError && _config.ConnectionRetryPolicy != null)
+    if (wasNetworkError && _config.ConnectionRetryPolicy != null &&
+        Volatile.Read(ref _connectionEpoch) == epoch)
     {
       _logger?.LogInformation("TCP Client '{Name}' will attempt automatic reconnection to {Host}:{Port}...", Name, _config.RemoteHost, _config.RemotePort);
       StartAutoReconnect();
+    }
+  }
+
+  /// <summary>
+  /// 接続世代が変わっていない場合のみ切断処理を実行する。
+  /// 世代チェックは_disconnectLock内で行うため、新しい接続の確立処理と競合しない。
+  /// </summary>
+  private async Task DisconnectIfCurrentEpochAsync(int epoch, bool isIntentional)
+  {
+    await _disconnectLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try
+    {
+      if (Volatile.Read(ref _connectionEpoch) != epoch)
+      {
+        return;
+      }
+      await DisconnectCoreAsync(isIntentional, CancellationToken.None).ConfigureAwait(false);
+    }
+    finally
+    {
+      _disconnectLock.Release();
     }
   }
 

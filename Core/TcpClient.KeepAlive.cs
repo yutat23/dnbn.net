@@ -150,7 +150,7 @@ partial class TcpClient
       try
       {
         await tcs.Task;
-        // 応答はReceiveLoopAsyncでOnKeepAliveResponseReceivedイベントが発行される
+        // 応答はReceiveLoopCoreAsyncでOnKeepAliveResponseReceivedイベントが発行される
       }
       catch (TaskCanceledException)
       {

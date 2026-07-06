@@ -23,6 +23,10 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   private ChannelWriter<SendRequest> _sendQueueWriter = null!;
   private ChannelReader<SendRequest> _sendQueueReader = null!;
   private Task? _sendLoopTask;
+  private Task<bool>? _receiveLoopTask;
+  // 接続世代。新しい接続が確立されるたびに増加し、旧接続の受信ループ後始末が
+  // 新しい接続を巻き添えで切断しないためのガードとして使用する
+  private int _connectionEpoch;
   private readonly LinkedList<SendRequest> _pendingResponseRequests = new();
   private readonly object _pendingResponseRequestsLock = new();
   private CancellationTokenSource? _keepAliveTimerCts;
@@ -149,21 +153,34 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     _sendQueueReader = channel.Reader;
   }
 
+  /// <summary>
+  /// 新しい接続のために状態をリセットする。
+  /// 呼び出し側は_disconnectLockを保持し、旧接続の送受信ループが完了していることを保証すること。
+  /// </summary>
   private void ResetConnectionStateForConnect()
   {
-    if (_cancellationTokenSource.IsCancellationRequested)
-    {
-      var oldCts = _cancellationTokenSource;
-      _cancellationTokenSource = new CancellationTokenSource();
-      oldCts.Dispose();
-    }
+    // 接続世代を進める。これ以降、旧世代の受信ループ後始末（HandleReceiveLoopCompletionAsync）は
+    // 何もせずに終了するため、新しい接続が巻き添えで切断されることはない
+    Interlocked.Increment(ref _connectionEpoch);
 
+    // 旧接続のループが万一まだ動いていても確実に停止するようキャンセルしてから差し替える。
+    // 旧CTSは旧ループが参照している可能性があるためDisposeしない（登録もタイマーも持たないためGCに任せる）
+    var oldCts = _cancellationTokenSource;
+    if (!oldCts.IsCancellationRequested)
+    {
+      oldCts.Cancel();
+    }
+    _cancellationTokenSource = new CancellationTokenSource();
+
+    _sendQueueWriter.TryComplete();
     InitializeSendQueue();
     // 前回接続の中途半端な受信データが残っていると、再接続後の
     // メッセージ境界がずれるためクリアする
     _parser.Clear();
     _isIntentionalDisconnect = false;
     Interlocked.Exchange(ref _keepAliveResponseTcs, null)?.TrySetCanceled();
+    _sendLoopTask = null;
+    _receiveLoopTask = null;
   }
 
   /// <summary>
@@ -179,19 +196,40 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    ResetConnectionStateForConnect();
-
-    // 既存の登録を破棄
-    _externalCancellationTokenRegistration?.Dispose();
-
-    // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
-    _externalCancellationTokenRegistration = cancellationToken.Register(() =>
+    // 切断処理・旧ループの後始末と直列化して状態をリセットする
+    await _disconnectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try
     {
-      if (!_cancellationTokenSource.IsCancellationRequested)
+      if (IsConnected)
       {
-        _cancellationTokenSource.Cancel();
+        return;
       }
-    });
+
+      // 旧接続のループが残っている場合（NW障害直後の再接続など）は、
+      // 確実に停止・完了させてから状態をリセットする
+      _cancellationTokenSource.Cancel();
+      _sendQueueWriter.TryComplete();
+      StopKeepAlive();
+      await WaitForLoopTasksAsync().ConfigureAwait(false);
+
+      ResetConnectionStateForConnect();
+
+      // 既存の登録を破棄
+      _externalCancellationTokenRegistration?.Dispose();
+
+      // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
+      _externalCancellationTokenRegistration = cancellationToken.Register(() =>
+      {
+        if (!_cancellationTokenSource.IsCancellationRequested)
+        {
+          _cancellationTokenSource.Cancel();
+        }
+      });
+    }
+    finally
+    {
+      _disconnectLock.Release();
+    }
 
     // 外部CancellationTokenと内部CancellationTokenSourceを統合
     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
@@ -256,16 +294,61 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
 
     OnConnected?.Invoke(this, EventArgs.Empty);
 
-    // 送信ループを開始
-    _sendLoopTask = Task.Run(SendLoopAsync, _cancellationTokenSource.Token);
+    // この接続専用のトークン・キューリーダーをキャプチャする。
+    // 再接続でフィールドが新しいインスタンスに差し替わっても、
+    // この接続のループが新しい接続の状態に触れないようにするため
+    var token = _cancellationTokenSource.Token;
+    var sendQueueReader = _sendQueueReader;
+    var epoch = Volatile.Read(ref _connectionEpoch);
 
-    // 受信ループを開始
-    _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
+    // 送信ループを開始
+    _sendLoopTask = Task.Run(() => SendLoopAsync(sendQueueReader, token), CancellationToken.None);
+
+    // 受信ループを開始（本体タスクはDisconnectAsyncが完了を待機する。
+    // 後始末はepochガード付きの別タスクに分離し、awaitの循環によるデッドロックを防ぐ）
+    var receiveLoopTask = Task.Run(() => ReceiveLoopCoreAsync(token), CancellationToken.None);
+    _receiveLoopTask = receiveLoopTask;
+    _ = HandleReceiveLoopCompletionAsync(receiveLoopTask, epoch);
 
     // キープアライブを開始
     if (_config.KeepAlive?.Enabled == true)
     {
       StartKeepAlive();
+    }
+  }
+
+  /// <summary>
+  /// 送受信ループの完了を待つ。トークンのキャンセル後に呼ぶこと。
+  /// 受信ループ本体はDisconnectAsyncを呼ばないため、ここで待機してもデッドロックしない。
+  /// </summary>
+  private async Task WaitForLoopTasksAsync()
+  {
+    if (_sendLoopTask != null)
+    {
+      try
+      {
+        await _sendLoopTask.ConfigureAwait(false);
+      }
+      catch (OperationCanceledException)
+      {
+        // 正常な終了
+      }
+      catch (Exception ex)
+      {
+        _logger?.LogError(ex, "Error waiting for send loop to complete in client {Name}", Name);
+      }
+    }
+
+    if (_receiveLoopTask != null)
+    {
+      try
+      {
+        await _receiveLoopTask.ConfigureAwait(false);
+      }
+      catch (Exception ex)
+      {
+        _logger?.LogError(ex, "Error waiting for receive loop to complete in client {Name}", Name);
+      }
     }
   }
 
@@ -335,22 +418,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     // 送信キューを閉じる（既に閉じている場合は無視）
     _sendQueueWriter.TryComplete();
 
-    // 送信ループの完了を待つ
-    if (_sendLoopTask != null)
-    {
-      try
-      {
-        await _sendLoopTask.ConfigureAwait(false);
-      }
-      catch (OperationCanceledException)
-      {
-        // 正常な終了
-      }
-      catch (Exception ex)
-      {
-        _logger?.LogError(ex, "Error waiting for send loop to complete in client {Name}", Name);
-      }
-    }
+    // 送受信ループの完了を待つ。これにより切断完了後に旧受信ループが
+    // 残存して新しい接続に干渉することがなくなる
+    await WaitForLoopTasksAsync().ConfigureAwait(false);
 
     if (wasConnected)
     {

@@ -23,7 +23,9 @@ public class WebUIService : IDisposable
   private readonly WebUIConfig _config;
   private readonly ILogger? _logger;
   private readonly CancellationTokenSource _cancellationTokenSource = new();
-  private readonly ConcurrentBag<StreamWriter> _sseConnections = new();
+  // ConcurrentBag.TryTakeは「任意の1件」を取り除くため、切断された接続の代わりに
+  // 生きている接続を管理外にしてしまう。特定のwriterを確実に除去できるDictionaryを使う
+  private readonly ConcurrentDictionary<StreamWriter, byte> _sseConnections = new();
   private readonly Dictionary<ITcpClient, ClientEventHandlers> _clientHandlers = new();
   private readonly Dictionary<ITcpServer, ServerEventHandlers> _serverHandlers = new();
   private readonly object _sync = new();
@@ -168,7 +170,7 @@ public class WebUIService : IDisposable
         try
         {
           writer = new StreamWriter(context.Response.Body, Encoding.UTF8) { AutoFlush = false };
-          _sseConnections.Add(writer);
+          _sseConnections.TryAdd(writer, 0);
 
           if (_config.EnableLogging)
           {
@@ -212,7 +214,7 @@ public class WebUIService : IDisposable
         {
           if (writer != null)
           {
-            _sseConnections.TryTake(out _);
+            _sseConnections.TryRemove(writer, out _);
             try
             {
               writer.Dispose();
@@ -357,7 +359,7 @@ public class WebUIService : IDisposable
     }
 
     // SSE接続を閉じる（Webアプリケーション停止前に明示的に閉じる）
-    foreach (var writer in _sseConnections)
+    foreach (var writer in _sseConnections.Keys)
     {
       try
       {
@@ -556,11 +558,10 @@ public class WebUIService : IDisposable
     }
 
     var status = GetStatus();
-    var json = JsonSerializer.Serialize(status, _jsonOptions);
 
     var deadConnections = new List<StreamWriter>();
 
-    foreach (var writer in _sseConnections)
+    foreach (var writer in _sseConnections.Keys)
     {
       try
       {
@@ -573,10 +574,10 @@ public class WebUIService : IDisposable
       }
     }
 
-    // 切断された接続を削除
+    // 切断された接続を削除（生きている接続を巻き添えにしないよう、該当writerを指定して除去）
     foreach (var dead in deadConnections)
     {
-      _sseConnections.TryTake(out _);
+      _sseConnections.TryRemove(dead, out _);
       try
       {
         dead.Dispose();
@@ -835,7 +836,7 @@ public class WebUIService : IDisposable
     _updateTimer?.Dispose();
     _cancellationTokenSource.Dispose();
 
-    foreach (var writer in _sseConnections)
+    foreach (var writer in _sseConnections.Keys)
     {
       try
       {

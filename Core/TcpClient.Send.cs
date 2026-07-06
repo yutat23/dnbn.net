@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Dnbn.Models;
 using Microsoft.Extensions.Logging;
 
@@ -8,11 +9,13 @@ partial class TcpClient
   /// <summary>
   /// 送信ループ（順次処理）
   /// </summary>
-  private async Task SendLoopAsync()
+  /// <param name="sendQueueReader">この接続専用の送信キューリーダー（再接続でフィールドが差し替わっても影響を受けないよう起動時にキャプチャ）</param>
+  /// <param name="token">この接続専用のキャンセレーショントークン</param>
+  private async Task SendLoopAsync(ChannelReader<SendRequest> sendQueueReader, CancellationToken token)
   {
     try
     {
-      await foreach (var request in _sendQueueReader.ReadAllAsync(_cancellationTokenSource.Token))
+      await foreach (var request in sendQueueReader.ReadAllAsync(token))
       {
         try
         {

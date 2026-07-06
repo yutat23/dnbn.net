@@ -140,11 +140,7 @@ public class EndToEndTests
     await client.DisconnectAsync();
     Assert.False(client.IsConnected);
 
-    // 既知の競合（要修正）: DisconnectAsync は受信ループの完了を待たないため、
-    // 即時再接続すると旧受信ループの後始末が新接続のソケットを破棄することがある。
-    // ライブラリ側で受信ループの完了待ちが実装されたらこの待機は削除すること。
-    await Task.Delay(100);
-
+    // DisconnectAsync は受信ループの完了を待つため、整定待ちなしで即時再接続できること
     await client.ConnectAsync();
     var r2 = await client.SendAsync("second");
     Assert.Equal("echo:second", r2.Text?.Trim());
