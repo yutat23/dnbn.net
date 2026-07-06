@@ -42,6 +42,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   private CancellationTokenSource? _delayInterruptCts;
   private readonly object _delayInterruptLock = new();
   private readonly SemaphoreSlim _disconnectLock = new(1, 1);
+  // ConnectAsync・自動再接続の接続試行を直列化するロック（並行呼び出しによる二重接続を防ぐ）。
+  // 取得順序は必ず _connectLock → _disconnectLock（逆順取得はデッドロックの原因になるため禁止）
+  private readonly SemaphoreSlim _connectLock = new(1, 1);
 
   // 統計情報
   private readonly ClientStats _stats = new();
@@ -72,6 +75,42 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   /// 接続状態
   /// </summary>
   public bool IsConnected => _transport.IsConnected;
+
+  // ConnectionStateをintで保持（Interlockedで排他なく遷移させるため）
+  private int _connectionState = (int)ConnectionState.Disconnected;
+
+  /// <summary>
+  /// 詳細な接続状態（未接続/接続中/接続済み/自動再接続中）
+  /// </summary>
+  public ConnectionState State => (ConnectionState)Volatile.Read(ref _connectionState);
+
+  /// <summary>
+  /// 接続状態変化イベント。状態が実際に変化したときのみ発火する。
+  /// </summary>
+  public event EventHandler<(ConnectionState previous, ConnectionState current)>? OnConnectionStateChanged;
+
+  /// <summary>
+  /// 接続状態を遷移させ、変化があった場合のみイベントを発火する
+  /// </summary>
+  private void SetConnectionState(ConnectionState newState)
+  {
+    var previous = (ConnectionState)Interlocked.Exchange(ref _connectionState, (int)newState);
+    if (previous == newState)
+    {
+      return;
+    }
+
+    _logger?.LogDebug("TCP Client '{Name}' connection state changed: {Previous} -> {Current}", Name, previous, newState);
+    try
+    {
+      OnConnectionStateChanged?.Invoke(this, (previous, newState));
+    }
+    catch (Exception ex)
+    {
+      // ユーザーハンドラの例外で接続処理を止めない
+      _logger?.LogError(ex, "OnConnectionStateChanged handler threw an exception in client {Name}", Name);
+    }
+  }
 
   /// <summary>
   /// メッセージ受信イベント
@@ -196,8 +235,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    // 切断処理・旧ループの後始末と直列化して状態をリセットする
-    await _disconnectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+    // 並行するConnectAsync・自動再接続と直列化する（二重接続の防止）。
+    // 後続の呼び出しは先行の接続完了を待ち、接続済みになっていれば何もせず返る
+    await _connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
     try
     {
       if (IsConnected)
@@ -205,55 +245,74 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
         return;
       }
 
-      // 旧接続のループが残っている場合（NW障害直後の再接続など）は、
-      // 確実に停止・完了させてから状態をリセットする
-      _cancellationTokenSource.Cancel();
-      _sendQueueWriter.TryComplete();
-      StopKeepAlive();
-      await WaitForLoopTasksAsync().ConfigureAwait(false);
-
-      ResetConnectionStateForConnect();
-
-      // 既存の登録を破棄
-      _externalCancellationTokenRegistration?.Dispose();
-
-      // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
-      _externalCancellationTokenRegistration = cancellationToken.Register(() =>
+      // 切断処理・旧ループの後始末と直列化して状態をリセットする
+      await _disconnectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+      try
       {
-        if (!_cancellationTokenSource.IsCancellationRequested)
+        // 旧接続のループが残っている場合（NW障害直後の再接続など）は、
+        // 確実に停止・完了させてから状態をリセットする
+        _cancellationTokenSource.Cancel();
+        _sendQueueWriter.TryComplete();
+        StopKeepAlive();
+        await WaitForLoopTasksAsync().ConfigureAwait(false);
+
+        ResetConnectionStateForConnect();
+
+        // 既存の登録を破棄
+        _externalCancellationTokenRegistration?.Dispose();
+
+        // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
+        _externalCancellationTokenRegistration = cancellationToken.Register(() =>
         {
-          _cancellationTokenSource.Cancel();
+          if (!_cancellationTokenSource.IsCancellationRequested)
+          {
+            _cancellationTokenSource.Cancel();
+          }
+        });
+
+        SetConnectionState(ConnectionState.Connecting);
+      }
+      finally
+      {
+        _disconnectLock.Release();
+      }
+
+      try
+      {
+        // 外部CancellationTokenと内部CancellationTokenSourceを統合
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
+
+        // 接続リトライポリシーが設定されている場合は、リトライを実行
+        if (_config.ConnectionRetryPolicy != null)
+        {
+          await RetryHelper.ExecuteConnectionRetryAsync(
+              async () =>
+              {
+                await _transport.ConnectAsync(linkedCts.Token).ConfigureAwait(false);
+                OnTransportConnected(isReconnect: false);
+              },
+              _config.ConnectionRetryPolicy,
+              linkedCts.Token,
+              _logger,
+              onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } },
+              targetDescription: RetryLogTarget).ConfigureAwait(false);
         }
-      });
+        else
+        {
+          // リトライポリシーが設定されていない場合は、従来通り1回だけ試行
+          await _transport.ConnectAsync(linkedCts.Token).ConfigureAwait(false);
+          OnTransportConnected(isReconnect: false);
+        }
+      }
+      catch
+      {
+        SetConnectionState(ConnectionState.Disconnected);
+        throw;
+      }
     }
     finally
     {
-      _disconnectLock.Release();
-    }
-
-    // 外部CancellationTokenと内部CancellationTokenSourceを統合
-    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
-
-    // 接続リトライポリシーが設定されている場合は、リトライを実行
-    if (_config.ConnectionRetryPolicy != null)
-    {
-      await RetryHelper.ExecuteConnectionRetryAsync(
-          async () =>
-          {
-            await _transport.ConnectAsync(linkedCts.Token).ConfigureAwait(false);
-            OnTransportConnected(isReconnect: false);
-          },
-          _config.ConnectionRetryPolicy,
-          linkedCts.Token,
-          _logger,
-          onDelayStarting: cts => { lock (_delayInterruptLock) { _delayInterruptCts = cts; } },
-          targetDescription: RetryLogTarget).ConfigureAwait(false);
-    }
-    else
-    {
-      // リトライポリシーが設定されていない場合は、従来通り1回だけ試行
-      await _transport.ConnectAsync(linkedCts.Token).ConfigureAwait(false);
-      OnTransportConnected(isReconnect: false);
+      _connectLock.Release();
     }
   }
 
@@ -291,6 +350,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     {
       _logger?.LogInformation("TCP Client '{Name}' connected to {Host}:{Port}", Name, _config.RemoteHost, _config.RemotePort);
     }
+
+    // イベントハンドラからStateを参照したときに接続済みが見えるよう、OnConnectedより先に遷移させる
+    SetConnectionState(ConnectionState.Connected);
 
     OnConnected?.Invoke(this, EventArgs.Empty);
 
@@ -445,6 +507,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     }
 
     Interlocked.Exchange(ref _keepAliveResponseTcs, null)?.TrySetCanceled();
+
+    // 接続試行中（Connecting/Reconnecting）に切断された場合も含めて未接続へ遷移させる
+    SetConnectionState(ConnectionState.Disconnected);
 
     if (!wasConnected)
     {

@@ -50,8 +50,28 @@ var client = factory.CreateClient("MainClient");
 | `RetryPolicy` | メッセージ送信リトライ設定 |
 | `ConnectionRetryPolicy` | 接続リトライ設定 |
 | `ConnectionInfo` | 接続状態と統計 |
+| `State` | 詳細な接続状態（`ConnectionState`） |
 | `OnMessageReceived` | プッシュ通知受信イベント |
 | `OnKeepAliveResponseReceived` | KeepAlive応答イベント |
+| `OnConnectionStateChanged` | 接続状態変化イベント |
+
+### ConnectionState
+
+`State` プロパティと `OnConnectionStateChanged` イベントで、`OnConnected` / `OnDisconnected` だけでは分からない「自動再接続中かどうか」を観測できます。
+
+| 値 | 意味 |
+|---|---|
+| `Disconnected` | 未接続（初期状態、意図的な切断後、再接続の断念後） |
+| `Connecting` | `ConnectAsync` による接続試行中（リトライ待機中を含む） |
+| `Connected` | 接続済み |
+| `Reconnecting` | NW障害後の自動再接続中（リトライ待機中を含む） |
+
+```csharp
+client.OnConnectionStateChanged += (_, e) =>
+{
+    Console.WriteLine($"{e.previous} -> {e.current}");
+};
+```
 
 ## Message
 

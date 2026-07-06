@@ -21,6 +21,11 @@ public interface ITcpClient : IDisposable
   bool IsConnected { get; }
 
   /// <summary>
+  /// 詳細な接続状態（未接続/接続中/接続済み/自動再接続中）
+  /// </summary>
+  ConnectionState State { get; }
+
+  /// <summary>
   /// メッセージ受信イベント
   /// </summary>
   event EventHandler<Message>? OnMessageReceived;
@@ -44,6 +49,12 @@ public interface ITcpClient : IDisposable
   /// キープアライブ応答受信イベント
   /// </summary>
   event EventHandler<Message>? OnKeepAliveResponseReceived;
+
+  /// <summary>
+  /// 接続状態変化イベント。状態が実際に変化したときのみ発火する。
+  /// OnConnected / OnDisconnected と異なり、自動再接続の開始（Reconnecting への遷移）も観測できる。
+  /// </summary>
+  event EventHandler<(ConnectionState previous, ConnectionState current)>? OnConnectionStateChanged;
 
   /// <summary>
   /// メッセージ受信のObservable

@@ -1,4 +1,5 @@
 using Dnbn.Configuration;
+using Dnbn.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Dnbn.Core;
@@ -33,6 +34,8 @@ partial class TcpClient
       _reconnectCts = new CancellationTokenSource();
       var reconnectCts = _reconnectCts;
 
+      SetConnectionState(ConnectionState.Reconnecting);
+
       _reconnectTask = Task.Run(async () =>
       {
         try
@@ -45,26 +48,35 @@ partial class TcpClient
           await RetryHelper.ExecuteConnectionRetryAsync(
                     async () =>
                     {
-                      // 既に接続されている場合は何もしない
-                      if (IsConnected)
-                      {
-                        return;
-                      }
-
-                      // トランスポートを再接続
-                      await _transport.ConnectAsync(reconnectCts.Token).ConfigureAwait(false);
-
-                      // 状態リセットとループ起動は切断処理・旧ループの後始末と直列化する
-                      await _disconnectLock.WaitAsync(reconnectCts.Token).ConfigureAwait(false);
+                      // ConnectAsyncとの並行実行を直列化する（二重接続の防止）
+                      await _connectLock.WaitAsync(reconnectCts.Token).ConfigureAwait(false);
                       try
                       {
-                        ResetConnectionStateForConnect();
+                        // 既に接続されている場合は何もしない
+                        if (IsConnected)
+                        {
+                          return;
+                        }
 
-                        OnTransportConnected(isReconnect: true);
+                        // トランスポートを再接続
+                        await _transport.ConnectAsync(reconnectCts.Token).ConfigureAwait(false);
+
+                        // 状態リセットとループ起動は切断処理・旧ループの後始末と直列化する
+                        await _disconnectLock.WaitAsync(reconnectCts.Token).ConfigureAwait(false);
+                        try
+                        {
+                          ResetConnectionStateForConnect();
+
+                          OnTransportConnected(isReconnect: true);
+                        }
+                        finally
+                        {
+                          _disconnectLock.Release();
+                        }
                       }
                       finally
                       {
-                        _disconnectLock.Release();
+                        _connectLock.Release();
                       }
                     },
                     _config.ConnectionRetryPolicy,
@@ -76,6 +88,10 @@ partial class TcpClient
         catch (OperationCanceledException)
         {
           _logger?.LogInformation("TCP Client '{Name}' reconnection to {Host}:{Port} cancelled", Name, _config.RemoteHost, _config.RemotePort);
+          if (!IsConnected)
+          {
+            SetConnectionState(ConnectionState.Disconnected);
+          }
         }
         catch (Exception ex)
         {
@@ -88,6 +104,10 @@ partial class TcpClient
           }
           _logger?.LogError(ex, "TCP Client '{Name}' automatic reconnection to {Host}:{Port} failed", Name, _config.RemoteHost, _config.RemotePort);
           OnError?.Invoke(this, ex);
+          if (!IsConnected)
+          {
+            SetConnectionState(ConnectionState.Disconnected);
+          }
         }
       });
     }
