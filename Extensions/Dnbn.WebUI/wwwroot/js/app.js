@@ -1,12 +1,27 @@
 // SSE接続管理
 let eventSource = null;
 let isAutoUpdateEnabled = true;
+let monitoringLoadInProgress = false;
+let modalMonitoringRequestSequence = 0;
+let messageViewMode = 'text';
+let monitoringSourcesSignature = '';
+let activeModalMonitoring = null;
+let latestFeatures = {
+  messageHistoryEnabled: false,
+  sendEnabled: false,
+  sendTokenRequired: false
+};
 
 // 初期化
 document.addEventListener('DOMContentLoaded', () => {
   initializeEventSource();
   setupEventHandlers();
   loadInitialStatus();
+  loadMonitoringData();
+  window.setInterval(() => {
+    loadMonitoringData();
+    loadActiveModalMonitoring();
+  }, 2000);
 });
 
 // EventSourceの初期化
@@ -41,27 +56,45 @@ function setupEventHandlers() {
   // リフレッシュボタン
   document.getElementById('refreshBtn').addEventListener('click', () => {
     loadInitialStatus();
+    loadMonitoringData();
+    loadActiveModalMonitoring();
+  });
+
+  document.getElementById('messageFormat').addEventListener('change', (event) => {
+    messageViewMode = event.target.value;
+    loadMonitoringData();
+    loadActiveModalMonitoring();
+  });
+
+  document.getElementById('timelineSourceFilter').addEventListener('change', loadMonitoringData);
+  document.getElementById('messageSourceFilter').addEventListener('change', loadMonitoringData);
+
+  document.getElementById('sendBtn').addEventListener('click', sendMessageFromUI);
+  document.getElementById('sendText').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      sendMessageFromUI();
+    }
   });
 
   // モーダル閉じるボタン
   document.getElementById('clientModalClose').addEventListener('click', () => {
-    document.getElementById('clientModal').classList.add('hidden');
+    closeMonitoringModal('clientModal');
   });
 
   document.getElementById('serverModalClose').addEventListener('click', () => {
-    document.getElementById('serverModal').classList.add('hidden');
+    closeMonitoringModal('serverModal');
   });
 
   // モーダル背景クリックで閉じる
   document.getElementById('clientModal').addEventListener('click', (e) => {
     if (e.target.id === 'clientModal') {
-      document.getElementById('clientModal').classList.add('hidden');
+      closeMonitoringModal('clientModal');
     }
   });
 
   document.getElementById('serverModal').addEventListener('click', (e) => {
     if (e.target.id === 'serverModal') {
-      document.getElementById('serverModal').classList.add('hidden');
+      closeMonitoringModal('serverModal');
     }
   });
 }
@@ -79,12 +112,412 @@ async function loadInitialStatus() {
 
 // UIを更新
 function updateUI(data) {
+  if (data.clients && data.servers) {
+    updateMonitoringSourceOptions(data.clients, data.servers);
+  }
   if (data.clients) {
     updateClientsTable(data.clients);
   }
   if (data.servers) {
     updateServersTable(data.servers);
   }
+  if (data.features) {
+    latestFeatures = data.features;
+    updateFeatureControls();
+  }
+  if (data.clients) {
+    updateSendClientOptions(data.clients);
+  }
+}
+
+function updateMonitoringSourceOptions(clients, servers) {
+  const sources = [
+    ...clients.map((client) => ({ type: 'Client', name: client.name })),
+    ...servers.map((server) => ({ type: 'Server', name: server.name }))
+  ];
+  const signature = JSON.stringify(sources);
+  if (signature === monitoringSourcesSignature) return;
+  monitoringSourcesSignature = signature;
+
+  ['timelineSourceFilter', 'messageSourceFilter'].forEach((id) => {
+    const select = document.getElementById(id);
+    const selected = select.value;
+    select.innerHTML = '<option value="">ALL</option>';
+
+    sources.forEach((source) => {
+      const option = document.createElement('option');
+      option.value = `${source.type}:${source.name}`;
+      option.dataset.source = source.name;
+      option.dataset.sourceType = source.type;
+      option.textContent = `[${source.type.toUpperCase()}] ${source.name}`;
+      select.appendChild(option);
+    });
+
+    if (Array.from(select.options).some((option) => option.value === selected)) {
+      select.value = selected;
+    }
+  });
+}
+
+function selectMonitoringSource(sourceType, sourceName) {
+  const value = `${sourceType}:${sourceName}`;
+  ['timelineSourceFilter', 'messageSourceFilter'].forEach((id) => {
+    const select = document.getElementById(id);
+    if (Array.from(select.options).some((option) => option.value === value)) {
+      select.value = value;
+    }
+  });
+  loadMonitoringData();
+}
+
+function getSourceQuery(selectId) {
+  const select = document.getElementById(selectId);
+  const option = select.options[select.selectedIndex];
+  if (!option?.dataset.source) return '';
+
+  const params = new URLSearchParams({
+    source: option.dataset.source,
+    sourceType: option.dataset.sourceType
+  });
+  return `?${params.toString()}`;
+}
+
+function updateFeatureControls() {
+  const sendDisabled = !latestFeatures.sendEnabled;
+  document.getElementById('sendDisabledNote').classList.toggle('hidden', !sendDisabled);
+  ['sendClient', 'sendText', 'sendToken', 'sendOneWay', 'sendBtn'].forEach((id) => {
+    document.getElementById(id).disabled = sendDisabled;
+  });
+  document.getElementById('sendToken').closest('label').classList.toggle(
+    'hidden', !latestFeatures.sendTokenRequired);
+}
+
+function updateSendClientOptions(clients) {
+  const select = document.getElementById('sendClient');
+  const selected = select.value;
+  select.innerHTML = '';
+
+  clients.forEach((client) => {
+    const option = document.createElement('option');
+    option.value = client.name;
+    option.textContent = `${client.name}${client.isConnected ? '' : ' [OFFLINE]'}`;
+    option.disabled = !client.isConnected;
+    select.appendChild(option);
+  });
+
+  if (clients.some((client) => client.name === selected && client.isConnected)) {
+    select.value = selected;
+  }
+}
+
+async function loadMonitoringData() {
+  if (monitoringLoadInProgress) return;
+  monitoringLoadInProgress = true;
+
+  try {
+    const [timelineResponse, messagesResponse, analyticsResponse] = await Promise.all([
+      fetch(`/api/timeline${getSourceQuery('timelineSourceFilter')}`),
+      fetch(`/api/messages${getSourceQuery('messageSourceFilter')}`),
+      fetch(`/api/analytics${getSourceQuery('messageSourceFilter')}`)
+    ]);
+    if (!timelineResponse.ok || !messagesResponse.ok || !analyticsResponse.ok) {
+      throw new Error('監視データの取得に失敗しました');
+    }
+
+    const [timeline, messages, analytics] = await Promise.all([
+      timelineResponse.json(),
+      messagesResponse.json(),
+      analyticsResponse.json()
+    ]);
+    updateTimeline(timeline.events || []);
+    updateMessages(messages.enabled, messages.messages || []);
+    updateAnalytics(analytics.enabled, analytics.clients || []);
+  } catch (error) {
+    console.error('監視データの取得エラー:', error);
+  } finally {
+    monitoringLoadInProgress = false;
+  }
+}
+
+function updateTimeline(events) {
+  const tbody = document.getElementById('timelineTableBody');
+  tbody.innerHTML = '';
+
+  if (events.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center" style="color: #666;">[NO EVENTS]</td></tr>';
+    return;
+  }
+
+  events.slice().reverse().forEach((entry) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td class="px-6 py-3 whitespace-nowrap">${formatTimestamp(entry.timestamp)}</td>
+      <td class="px-6 py-3 whitespace-nowrap">${escapeHtml(formatSource(entry))}</td>
+      <td class="px-6 py-3 whitespace-nowrap">${escapeHtml(entry.type)}</td>
+      <td class="px-6 py-3 message-payload">${escapeHtml(entry.detail || '--')}</td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+function updateMessages(enabled, messages) {
+  document.getElementById('messagesDisabledNote').classList.toggle('hidden', enabled);
+  const tbody = document.getElementById('messagesTableBody');
+  tbody.innerHTML = '';
+
+  if (!enabled || messages.length === 0) {
+    const text = enabled ? '[NO MESSAGES]' : '[MESSAGE HISTORY DISABLED]';
+    tbody.innerHTML = `<tr><td colspan="7" class="px-6 py-4 text-center" style="color: #666;">${text}</td></tr>`;
+    return;
+  }
+
+  messages.slice().reverse().forEach((entry) => {
+    const row = document.createElement('tr');
+    const shownPayload = messageViewMode === 'hex' ? entry.hex : entry.text;
+    const capturedBytes = entry.hex ? entry.hex.length / 2 : 0;
+    const truncated = entry.sizeBytes > capturedBytes ? ` (${entry.sizeBytes} bytes total)` : '';
+    row.innerHTML = `
+      <td class="px-6 py-3 whitespace-nowrap">${formatTimestamp(entry.timestamp)}</td>
+      <td class="px-6 py-3 whitespace-nowrap">${escapeHtml(formatSource(entry))}</td>
+      <td class="px-6 py-3 whitespace-nowrap">${escapeHtml(entry.direction)}</td>
+      <td class="px-6 py-3 whitespace-nowrap">${escapeHtml(entry.kind)}</td>
+      <td class="px-6 py-3 message-payload">${escapeHtml(shownPayload || '--')}${escapeHtml(truncated)}</td>
+      <td class="px-6 py-3 whitespace-nowrap">${entry.sizeBytes}</td>
+      <td class="px-6 py-3 whitespace-nowrap">${entry.elapsedMs == null ? '--' : Number(entry.elapsedMs).toFixed(1)}</td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+function updateAnalytics(enabled, clients) {
+  renderAnalytics(document.getElementById('analyticsArea'), enabled, clients);
+}
+
+function renderAnalytics(area, enabled, clients) {
+  if (!area) return;
+  if (!enabled) {
+    area.textContent = '';
+    return;
+  }
+  if (clients.length === 0) {
+    area.textContent = '[RESPONSE TIME] no samples';
+    return;
+  }
+
+  area.innerHTML = clients.map((client) =>
+    `<span class="analytics-item">${escapeHtml(client.name)}: n=${client.responseCount} ` +
+    `min/avg/p95/max=${client.minMs}/${client.avgMs}/${client.p95Ms}/${client.maxMs} ms</span>`
+  ).join('');
+}
+
+async function sendMessageFromUI() {
+  const button = document.getElementById('sendBtn');
+  const result = document.getElementById('sendResult');
+  const client = document.getElementById('sendClient').value;
+  const text = document.getElementById('sendText').value;
+
+  if (!latestFeatures.sendEnabled || !client || text.length === 0) {
+    result.textContent = '送信先と電文を入力してください。';
+    return;
+  }
+
+  button.disabled = true;
+  result.textContent = '送信中...';
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    const token = document.getElementById('sendToken').value;
+    if (latestFeatures.sendTokenRequired) {
+      headers['X-Dnbn-Send-Token'] = token;
+    }
+    const response = await fetch('/api/send', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        client,
+        text,
+        oneWay: document.getElementById('sendOneWay').checked
+      })
+    });
+    const body = await response.json();
+    if (!response.ok || body.success === false) {
+      throw new Error(body.error || `HTTP ${response.status}`);
+    }
+    result.textContent = body.response == null ? '送信完了（応答待ちなし）' : `応答: ${body.response}`;
+    loadMonitoringData();
+  } catch (error) {
+    result.textContent = `送信失敗: ${error.message}`;
+  } finally {
+    button.disabled = !latestFeatures.sendEnabled;
+  }
+}
+
+function formatTimestamp(value) {
+  return value ? new Date(value).toLocaleString('ja-JP') : '--';
+}
+
+function formatSource(entry) {
+  return entry.sourceType ? `[${entry.sourceType.toUpperCase()}] ${entry.source}` : entry.source;
+}
+
+function buildModalMonitoringHtml(prefix) {
+  return `
+    <div class="modal-monitoring-section">
+      <h4 class="text-base font-semibold mb-3">[EVENT LOG]</h4>
+      <div class="cyber-table rounded-lg modal-log-scroll">
+        <table class="min-w-full">
+          <thead>
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium">TIME</th>
+              <th class="px-4 py-3 text-left text-xs font-medium">TYPE</th>
+              <th class="px-4 py-3 text-left text-xs font-medium">DETAIL</th>
+            </tr>
+          </thead>
+          <tbody id="${prefix}ModalTimelineBody">
+            <tr><td colspan="3" class="px-4 py-3 text-center muted-text">[LOADING]</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-monitoring-section">
+      <div class="flex items-center justify-between mb-3">
+        <h4 class="text-base font-semibold">[MESSAGES]</h4>
+        <label class="flex items-center gap-2 text-xs">
+          <span>DISPLAY</span>
+          <select id="${prefix}ModalMessageFormat" class="cyber-border rounded format-control">
+            <option value="text"${messageViewMode === 'text' ? ' selected' : ''}>TEXT</option>
+            <option value="hex"${messageViewMode === 'hex' ? ' selected' : ''}>HEX</option>
+          </select>
+        </label>
+      </div>
+      <div id="${prefix}ModalAnalytics" class="mb-3 muted-text"></div>
+      <div class="cyber-table rounded-lg modal-log-scroll">
+        <table class="min-w-full">
+          <thead>
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium">TIME</th>
+              <th class="px-4 py-3 text-left text-xs font-medium">DIR</th>
+              <th class="px-4 py-3 text-left text-xs font-medium">KIND</th>
+              <th class="px-4 py-3 text-left text-xs font-medium">TEXT / HEX</th>
+              <th class="px-4 py-3 text-left text-xs font-medium">SIZE</th>
+              <th class="px-4 py-3 text-left text-xs font-medium">RTT(ms)</th>
+            </tr>
+          </thead>
+          <tbody id="${prefix}ModalMessagesBody">
+            <tr><td colspan="6" class="px-4 py-3 text-center muted-text">[LOADING]</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function openModalMonitoring(sourceType, sourceName, prefix, modalId) {
+  activeModalMonitoring = { sourceType, sourceName, prefix, modalId };
+  document.getElementById(`${prefix}ModalMessageFormat`)?.addEventListener('change', (event) => {
+    messageViewMode = event.target.value;
+    document.getElementById('messageFormat').value = messageViewMode;
+    loadMonitoringData();
+    loadActiveModalMonitoring();
+  });
+  loadActiveModalMonitoring();
+}
+
+function closeMonitoringModal(modalId) {
+  document.getElementById(modalId).classList.add('hidden');
+  if (activeModalMonitoring?.modalId === modalId) {
+    activeModalMonitoring = null;
+    modalMonitoringRequestSequence++;
+  }
+}
+
+async function loadActiveModalMonitoring() {
+  const target = activeModalMonitoring;
+  if (!target) return;
+
+  const requestId = ++modalMonitoringRequestSequence;
+  const params = new URLSearchParams({
+    source: target.sourceName,
+    sourceType: target.sourceType
+  });
+
+  try {
+    const [timelineResponse, messagesResponse, analyticsResponse] = await Promise.all([
+      fetch(`/api/timeline?${params}`),
+      fetch(`/api/messages?${params}`),
+      fetch(`/api/analytics?${params}`)
+    ]);
+    if (!timelineResponse.ok || !messagesResponse.ok || !analyticsResponse.ok) {
+      throw new Error('対象別ログの取得に失敗しました');
+    }
+
+    const [timeline, messages, analytics] = await Promise.all([
+      timelineResponse.json(),
+      messagesResponse.json(),
+      analyticsResponse.json()
+    ]);
+    if (requestId !== modalMonitoringRequestSequence || activeModalMonitoring !== target) return;
+
+    renderModalTimeline(target.prefix, timeline.events || []);
+    renderModalMessages(target.prefix, messages.enabled, messages.messages || []);
+    renderAnalytics(
+      document.getElementById(`${target.prefix}ModalAnalytics`),
+      analytics.enabled,
+      analytics.clients || []);
+  } catch (error) {
+    if (requestId !== modalMonitoringRequestSequence || activeModalMonitoring !== target) return;
+    const timelineBody = document.getElementById(`${target.prefix}ModalTimelineBody`);
+    const messagesBody = document.getElementById(`${target.prefix}ModalMessagesBody`);
+    if (timelineBody) {
+      timelineBody.innerHTML = `<tr><td colspan="3" class="px-4 py-3 text-center status-offline">${escapeHtml(error.message)}</td></tr>`;
+    }
+    if (messagesBody) {
+      messagesBody.innerHTML = `<tr><td colspan="6" class="px-4 py-3 text-center status-offline">${escapeHtml(error.message)}</td></tr>`;
+    }
+  }
+}
+
+function renderModalTimeline(prefix, events) {
+  const tbody = document.getElementById(`${prefix}ModalTimelineBody`);
+  if (!tbody) return;
+  if (events.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="px-4 py-3 text-center muted-text">[NO EVENTS]</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = events.slice().reverse().map((entry) => `
+    <tr>
+      <td class="px-4 py-3 whitespace-nowrap">${formatTimestamp(entry.timestamp)}</td>
+      <td class="px-4 py-3 whitespace-nowrap">${escapeHtml(entry.type)}</td>
+      <td class="px-4 py-3 message-payload">${escapeHtml(entry.detail || '--')}</td>
+    </tr>
+  `).join('');
+}
+
+function renderModalMessages(prefix, enabled, messages) {
+  const tbody = document.getElementById(`${prefix}ModalMessagesBody`);
+  if (!tbody) return;
+  if (!enabled || messages.length === 0) {
+    const text = enabled ? '[NO MESSAGES]' : '[MESSAGE HISTORY DISABLED]';
+    tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-3 text-center muted-text">${text}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = messages.slice().reverse().map((entry) => {
+    const shownPayload = messageViewMode === 'hex' ? entry.hex : entry.text;
+    const capturedBytes = entry.hex ? entry.hex.length / 2 : 0;
+    const truncated = entry.sizeBytes > capturedBytes ? ` (${entry.sizeBytes} bytes total)` : '';
+    return `
+      <tr>
+        <td class="px-4 py-3 whitespace-nowrap">${formatTimestamp(entry.timestamp)}</td>
+        <td class="px-4 py-3 whitespace-nowrap">${escapeHtml(entry.direction)}</td>
+        <td class="px-4 py-3 whitespace-nowrap">${escapeHtml(entry.kind)}</td>
+        <td class="px-4 py-3 message-payload">${escapeHtml(shownPayload || '--')}${escapeHtml(truncated)}</td>
+        <td class="px-4 py-3 whitespace-nowrap">${entry.sizeBytes}</td>
+        <td class="px-4 py-3 whitespace-nowrap">${entry.elapsedMs == null ? '--' : Number(entry.elapsedMs).toFixed(1)}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 // クライアントテーブルを更新
@@ -103,7 +536,10 @@ function updateClientsTable(clients) {
     const row = document.createElement('tr');
     row.className = 'transition-all cursor-pointer';
     row.style.cssText = 'transition: all 0.2s;';
-    row.addEventListener('click', () => showClientDetail(client));
+    row.addEventListener('click', () => {
+      selectMonitoringSource('Client', client.name);
+      showClientDetail(client);
+    });
     row.addEventListener('mouseenter', () => {
       row.style.background = '#f9f9f9';
     });
@@ -166,7 +602,10 @@ function updateServersTable(servers) {
     const row = document.createElement('tr');
     row.className = 'transition-all cursor-pointer';
     row.style.cssText = 'transition: all 0.2s;';
-    row.addEventListener('click', () => showServerDetail(server));
+    row.addEventListener('click', () => {
+      selectMonitoringSource('Server', server.name);
+      showServerDetail(server);
+    });
     row.addEventListener('mouseenter', () => {
       row.style.background = '#f9f9f9';
     });
@@ -294,11 +733,13 @@ function showClientDetail(client) {
           </div>
         </div>
       </div>
+      ${buildModalMonitoringHtml('client')}
     </div>
   `;
 
   content.innerHTML = html;
   modal.classList.remove('hidden');
+  openModalMonitoring('Client', client.name, 'client', 'clientModal');
 }
 
 // サーバー詳細を表示
@@ -390,11 +831,13 @@ function showServerDetail(server) {
         <h4 class="text-base font-semibold mb-3 font-mono">[SESSIONS] (${server.sessions?.length || 0})</h4>
         ${sessionsHtml}
       </div>
+      ${buildModalMonitoringHtml('server')}
     </div>
   `;
 
   content.innerHTML = html;
   modal.classList.remove('hidden');
+  openModalMonitoring('Server', server.name, 'server', 'serverModal');
 }
 
 // HTMLエスケープ

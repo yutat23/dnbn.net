@@ -51,6 +51,28 @@ var server = factory.CreateServer("MainServer");
 var client = factory.CreateClient("MainClient");
 ```
 
+### 設定済みクライアントをホストと連動させる
+
+ASP.NET Core / Generic Hostでは、設定済みクライアントをkeyed singletonとして登録し、起動時の接続と停止時の切断を自動化できます。既存の `AddDnbnNet` の後に追加します。
+
+```csharp
+services.AddDnbnNet(configuration);
+services.AddDnbnNetHostedClients(configuration);
+
+var client = serviceProvider.GetRequiredKeyedService<ITcpClient>("MainClient");
+```
+
+一覧が必要な処理では `IDnbnClientCollection` を注入できます。クライアントは名前ごとに単一インスタンスで、keyed serviceとコレクションから同じインスタンスが返ります。
+
+未接続時の送信を接続待ちにしたい場合は、対象クライアントに次を設定します。既定値は `false` のため、既存コードの即時例外動作は変わりません。
+
+```json
+{
+  "WaitForConnectionOnSend": true,
+  "WaitForConnectionTimeoutMilliseconds": 10000
+}
+```
+
 ## プッシュ通知を受ける
 
 `SendAsync` の応答ではなく、サーバーから任意タイミングで届く通知は `OnMessageReceived` で受けます。
@@ -99,4 +121,3 @@ Console.WriteLine($"connected={info.IsConnected}, sent={info.MessagesSent}, rece
 var serverInfo = server.ConnectionInfo;
 Console.WriteLine($"running={serverInfo.IsRunning}, sessions={serverInfo.ConnectionCount}");
 ```
-

@@ -65,6 +65,7 @@ partial class TcpClient
             {
               _stats.LastKeepAliveResponseReceivedAt = DateTime.UtcNow;
             }
+            RaiseMessageTrace(MessageTraceDirection.Received, MessageTraceKind.KeepAliveResponse, filteredMessage);
             OnKeepAliveResponseReceived?.Invoke(this, filteredMessage);
             handled = true;
           }
@@ -127,11 +128,20 @@ partial class TcpClient
               }
             }
 
-            matchedRequest?.ResponseTcs?.TrySetResult(filteredMessage);
+            if (matchedRequest != null)
+            {
+              RaiseMessageTrace(
+                  MessageTraceDirection.Received,
+                  MessageTraceKind.Response,
+                  filteredMessage,
+                  (DateTime.UtcNow - matchedRequest.EnqueuedAt).TotalMilliseconds);
+              matchedRequest.ResponseTcs?.TrySetResult(filteredMessage);
+            }
           }
 
           if (!handled)
           {
+            RaiseMessageTrace(MessageTraceDirection.Received, MessageTraceKind.Notification, filteredMessage);
             OnMessageReceived?.Invoke(this, filteredMessage);
             _messageReceivedSubject.OnNext(filteredMessage);
           }

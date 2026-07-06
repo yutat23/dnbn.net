@@ -110,19 +110,64 @@ internal static class Scenario07_Monitoring
       webUI = new WebUIService(
           new ITcpServer[] { server },
           new ITcpClient[] { client },
-          new WebUIConfig { Enabled = true, Port = WebUIPort, BindAddress = "localhost", UpdateIntervalSeconds = 1 },
+          new WebUIConfig
+          {
+            Enabled = true,
+            Port = WebUIPort,
+            BindAddress = "localhost",
+            UpdateIntervalSeconds = 1,
+            EnableMessageHistory = true,
+            MessageHistoryCapacity = 100,
+            MessageHistoryMaxPayloadBytes = 256,
+            AllowSendFromUI = true,
+            SendAuthToken = "sample-token",
+          },
           loggerFactory.CreateLogger<WebUIService>());
       await webUI.StartAsync();
 
       SampleConsole.Note("ブラウザで開くと接続状態・統計がリアルタイム表示される（SSE）");
+      SampleConsole.Note("Web UIから送信する場合のトークン: sample-token");
       Console.WriteLine();
-      Console.WriteLine("  Enterキーを押すとWeb UIを停止してシナリオを終了します...");
+      Console.WriteLine("  EnterキーまたはCtrl-CでWeb UIを停止してシナリオを終了します...");
 
       // 確認しやすいよう、待っている間も定期的に通信を発生させる
       using var trafficCts = new CancellationTokenSource();
       var trafficTask = GenerateTrafficAsync(client, trafficCts.Token);
 
-      Console.ReadLine();
+      using var exitCts = new CancellationTokenSource();
+      ConsoleCancelEventHandler cancelHandler = (_, e) =>
+      {
+        // プロセスを即時終了させず、finallyでWebUI・TCP接続を正常停止する。
+        e.Cancel = true;
+        exitCts.Cancel();
+      };
+      Console.CancelKeyPress += cancelHandler;
+      try
+      {
+        if (Console.IsInputRedirected)
+        {
+          await Console.In.ReadLineAsync();
+        }
+        else
+        {
+          while (!exitCts.IsCancellationRequested)
+          {
+            if (Console.KeyAvailable && Console.ReadKey(intercept: true).Key == ConsoleKey.Enter)
+            {
+              break;
+            }
+            await Task.Delay(50, exitCts.Token);
+          }
+        }
+      }
+      catch (OperationCanceledException) when (exitCts.IsCancellationRequested)
+      {
+        // Ctrl-Cによる正常終了
+      }
+      finally
+      {
+        Console.CancelKeyPress -= cancelHandler;
+      }
       trafficCts.Cancel();
       await trafficTask;
     }

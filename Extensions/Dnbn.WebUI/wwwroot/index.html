@@ -95,6 +95,77 @@
     .pulse {
       animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     }
+
+    .monitoring-section {
+      margin-top: 2rem;
+    }
+
+    .timeline-scroll {
+      max-height: 16rem;
+    }
+
+    .message-scroll {
+      max-height: 24rem;
+    }
+
+    .modal-monitoring-section {
+      border-top: 1px solid var(--digital-border);
+      margin-top: 1.5rem;
+      padding-top: 1rem;
+    }
+
+    .modal-log-scroll {
+      max-height: 16rem;
+      overflow: auto;
+    }
+
+    .muted-text {
+      color: var(--digital-gray);
+    }
+
+    .send-form {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .send-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .send-field-grow {
+      flex: 1 1 16rem;
+      min-width: 16rem;
+    }
+
+    .form-control {
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+    }
+
+    .format-control {
+      padding: 0.25rem 0.5rem;
+    }
+
+    .message-payload,
+    .send-result {
+      overflow-wrap: anywhere;
+    }
+
+    .message-payload {
+      max-width: 36rem;
+    }
+
+    .send-result {
+      white-space: pre-wrap;
+    }
+
+    .analytics-item {
+      display: inline-block;
+      margin-right: 1.5rem;
+    }
     
     @keyframes pulse {
       0%, 100% {
@@ -174,6 +245,116 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <!-- Timeline Section -->
+      <section class="monitoring-section">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold font-mono tracking-wider">[TIMELINE]</h2>
+          <label class="flex items-center gap-2 font-mono text-sm">
+            <span>TARGET</span>
+            <select id="timelineSourceFilter" class="cyber-border rounded format-control">
+              <option value="">ALL</option>
+            </select>
+          </label>
+        </div>
+        <div class="cyber-table rounded-lg overflow-hidden">
+          <div class="overflow-x-auto overflow-y-auto timeline-scroll">
+            <table class="min-w-full">
+              <thead>
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">TIME</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">SOURCE</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">TYPE</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">DETAIL</th>
+                </tr>
+              </thead>
+              <tbody id="timelineTableBody" class="font-mono text-sm">
+                <!-- 動的に生成 -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Messages Section -->
+      <section class="monitoring-section">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold font-mono tracking-wider">[MESSAGES]</h2>
+          <div class="flex items-center gap-4">
+            <label class="flex items-center gap-2 font-mono text-sm">
+              <span>TARGET</span>
+              <select id="messageSourceFilter" class="cyber-border rounded format-control">
+                <option value="">ALL</option>
+              </select>
+            </label>
+            <label class="flex items-center gap-2 font-mono text-sm">
+              <span>DISPLAY</span>
+              <select id="messageFormat" class="cyber-border rounded format-control">
+                <option value="text">TEXT</option>
+                <option value="hex">HEX</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div id="analyticsArea" class="mb-4 font-mono text-sm"></div>
+        <div id="messagesDisabledNote" class="hidden font-mono text-sm muted-text mb-4">
+          メッセージログは無効です（WebUIConfig.EnableMessageHistory を true にすると記録されます）
+        </div>
+        <div class="cyber-table rounded-lg overflow-hidden">
+          <div class="overflow-x-auto overflow-y-auto message-scroll">
+            <table class="min-w-full">
+              <thead>
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">TIME</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">SOURCE</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">DIR</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">KIND</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">TEXT</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono">SIZE</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider font-mono" title="要求送信から応答受信までの経過ミリ秒">RTT(ms)</th>
+                </tr>
+              </thead>
+              <tbody id="messagesTableBody" class="font-mono text-sm">
+                <!-- 動的に生成 -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Send Section -->
+      <section class="monitoring-section">
+        <h2 class="text-xl font-semibold mb-4 font-mono tracking-wider">[SEND]</h2>
+        <div class="cyber-border bg-white rounded-lg p-6 font-mono text-sm">
+          <p class="muted-text mb-4">
+            ⚠ 稼働中のアプリと同じ接続を共有します。応答のある電文は SendAsync（応答待ち）で送信してください。
+            既定では無効です（WebUIConfig.AllowSendFromUI）。
+          </p>
+          <p id="sendDisabledNote" class="hidden muted-text mb-4">
+            WebUIConfig.AllowSendFromUI が false のため送信できません。
+          </p>
+          <div class="send-form gap-4">
+            <label class="send-field">
+              <span>CLIENT</span>
+              <select id="sendClient" class="cyber-border rounded form-control py-2"></select>
+            </label>
+            <label class="send-field send-field-grow">
+              <span>TEXT</span>
+              <input id="sendText" type="text" class="cyber-border rounded form-control py-2" placeholder="送信する電文">
+            </label>
+            <label class="send-field">
+              <span>TOKEN</span>
+              <input id="sendToken" type="password" class="cyber-border rounded form-control py-2" placeholder="任意">
+            </label>
+            <label class="flex items-center gap-2 py-2">
+              <input id="sendOneWay" type="checkbox">
+              <span title="応答を待たずに送信（応答のある電文には使わないこと）">ONE-WAY</span>
+            </label>
+            <button id="sendBtn" class="cyber-button px-4 py-2 rounded-lg">[SEND]</button>
+          </div>
+          <div id="sendResult" class="mt-4 send-result"></div>
         </div>
       </section>
     </main>

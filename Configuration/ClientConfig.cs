@@ -104,6 +104,20 @@ public class ClientConfig
   public int SendQueueCapacity { get; set; } = 1000;
 
   /// <summary>
+  /// 未接続時の送信で接続確立を待つかどうか。
+  /// true の場合、SendAsync / SendOneWayAsync は未接続時に例外を投げる代わりに、
+  /// 再接続のバックオフ待機を中断（InterruptReconnectDelay）した上で
+  /// WaitForConnectionTimeoutMilliseconds まで接続確立を待つ。
+  /// タイムアウトした場合は TimeoutException。既定値: false（従来どおり即例外）
+  /// </summary>
+  public bool WaitForConnectionOnSend { get; set; } = false;
+
+  /// <summary>
+  /// WaitForConnectionOnSend 有効時に接続確立を待つ最大時間（ミリ秒）。既定値: 10000
+  /// </summary>
+  public int WaitForConnectionTimeoutMilliseconds { get; set; } = 10000;
+
+  /// <summary>
   /// 受信バッファの最大バイト数（未設定または0以下は無制限）。
   /// 終端文字・長さフィールドが未設定のプロトコルではバッファが無制限に伸びるリスクがあるため、
   /// 任意で上限を設定することでメモリ枯渇を防げる。

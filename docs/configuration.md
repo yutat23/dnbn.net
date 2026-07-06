@@ -50,6 +50,8 @@
 | `ConnectionRetryPolicy` | `RetryPolicy?` | `null` | 接続失敗/切断時の再接続リトライ |
 | `TimeoutMilliseconds` | `int` | `5000` | `SendAsync` の既定タイムアウト |
 | `SendQueueCapacity` | `int` | `1000` | 送信キューの最大サイズ。満杯時は送信呼び出しが空き待ちになる |
+| `WaitForConnectionOnSend` | `bool` | `false` | 未接続時の送信で接続確立を待つ。既定値では従来どおり即座に `InvalidOperationException` |
+| `WaitForConnectionTimeoutMilliseconds` | `int` | `10000` | 接続待ち送信の最大待機時間。タイムアウト時は `TimeoutException` |
 | `KeepAlive` | `KeepAliveConfig?` | `null` | KeepAlive設定（アプリケーションレベル：電文送信による死活監視） |
 | `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCPレベルのキープアライブ設定 |
 | `FixedHeaderLength` | `int?` | `null` | 固定長/長さフィールド方式のヘッダ長 |
@@ -126,4 +128,11 @@ Web UI は `dnbn.net.WebUI` パッケージ側で使います。
 | `UpdateIntervalSeconds` | `int` | `1` | SSE更新間隔 |
 | `BindAddress` | `string` | `"localhost"` | バインドアドレス。`"*"` で全アドレス |
 | `EnableLogging` | `bool` | `true` | Web UIログ |
+| `EventTimelineCapacity` | `int` | `200` | 接続・切断・状態遷移・エラー履歴の最大件数 |
+| `EnableMessageHistory` | `bool` | `false` | 送受信メッセージ履歴を有効にする。ペイロードを扱うため既定OFF |
+| `MessageHistoryCapacity` | `int` | `200` | メッセージ履歴の最大件数 |
+| `MessageHistoryMaxPayloadBytes` | `int` | `512` | 履歴1件に保持するペイロードの最大バイト数 |
+| `AllowSendFromUI` | `bool` | `false` | Web UIからの送信を有効にする。既定OFF |
+| `SendAuthToken` | `string?` | `null` | 送信APIが `X-Dnbn-Send-Token` に要求するトークン |
 
+`EventTimelineCapacity` とメッセージ履歴の各上限はリングバッファとして機能し、上限を超えると古い項目から破棄されます。`AllowSendFromUI` を有効にする場合は `SendAuthToken` を設定し、Web UIのポートを信頼できるネットワークだけに公開してください。

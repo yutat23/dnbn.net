@@ -54,6 +54,7 @@ var client = factory.CreateClient("MainClient");
 | `OnMessageReceived` | プッシュ通知受信イベント |
 | `OnKeepAliveResponseReceived` | KeepAlive応答イベント |
 | `OnConnectionStateChanged` | 接続状態変化イベント |
+| `OnMessageTrace` | 要求・応答・通知・KeepAliveを含む全送受信の診断イベント |
 
 ### ConnectionState
 
@@ -70,6 +71,17 @@ var client = factory.CreateClient("MainClient");
 client.OnConnectionStateChanged += (_, e) =>
 {
     Console.WriteLine($"{e.previous} -> {e.current}");
+};
+```
+
+### MessageTrace
+
+`OnMessageTrace` は、`OnMessageReceived` には流れない `SendAsync` の応答やKeepAliveも観測します。送信方向の `RawData` / `Text` は終端文字を含む実送信内容です。イベントの `Message` は診断用スナップショットなので、変更しても実際の送受信処理には影響しません。
+
+```csharp
+client.OnMessageTrace += (_, trace) =>
+{
+    Console.WriteLine($"{trace.Timestamp:o} {trace.Direction} {trace.Kind} {trace.Message.Text}");
 };
 ```
 
@@ -101,4 +113,3 @@ public interface IMessageFilter
     Task<Message> OnReceivedAsync(Message msg, IMessageContext ctx);
 }
 ```
-

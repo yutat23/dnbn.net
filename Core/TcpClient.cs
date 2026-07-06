@@ -90,6 +90,64 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   public event EventHandler<(ConnectionState previous, ConnectionState current)>? OnConnectionStateChanged;
 
   /// <summary>
+  /// メッセージトレースイベント（診断用）。SendAsyncの応答・KeepAliveを含む全送受信を観測できる。
+  /// </summary>
+  public event EventHandler<MessageTraceEvent>? OnMessageTrace;
+
+  /// <summary>
+  /// メッセージトレースイベントを発火する（ハンドラ未登録時は何もしない）
+  /// </summary>
+  private void RaiseMessageTrace(MessageTraceDirection direction, MessageTraceKind kind, Message message, double? elapsedMilliseconds = null)
+  {
+    var handler = OnMessageTrace;
+    if (handler == null)
+    {
+      return;
+    }
+
+    // 診断ハンドラが送受信処理で使用中の Message を変更できないよう、
+    // ハンドラが存在する場合だけスナップショットを作る。
+    var snapshot = new Message
+    {
+      RawData = message.RawData?.ToArray() ?? Array.Empty<byte>(),
+      Text = message.Text,
+      Code = message.Code,
+      Timestamp = message.Timestamp,
+      Metadata = message.Metadata != null
+          ? new Dictionary<string, object>(message.Metadata)
+          : new Dictionary<string, object>(),
+    };
+    var timestamp = DateTime.UtcNow;
+
+    // ある購読者の例外で、送受信ループや他の購読者を止めない。
+    foreach (EventHandler<MessageTraceEvent> subscriber in handler.GetInvocationList())
+    {
+      try
+      {
+        subscriber.Invoke(this, new MessageTraceEvent
+        {
+          Timestamp = timestamp,
+          Direction = direction,
+          Kind = kind,
+          Message = new Message
+          {
+            RawData = snapshot.RawData.ToArray(),
+            Text = snapshot.Text,
+            Code = snapshot.Code,
+            Timestamp = snapshot.Timestamp,
+            Metadata = new Dictionary<string, object>(snapshot.Metadata),
+          },
+          ElapsedMilliseconds = elapsedMilliseconds,
+        });
+      }
+      catch (Exception ex)
+      {
+        _logger?.LogError(ex, "OnMessageTrace handler threw an exception in client {Name}", Name);
+      }
+    }
+  }
+
+  /// <summary>
   /// 接続状態を遷移させ、変化があった場合のみイベントを発火する
   /// </summary>
   private void SetConnectionState(ConnectionState newState)
@@ -538,10 +596,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   /// <returns>応答メッセージ</returns>
   public async Task<Message> SendAsync(Message message, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
   {
-    if (!IsConnected)
-    {
-      throw new InvalidOperationException("Not connected");
-    }
+    await EnsureConnectedForSendAsync(cancellationToken).ConfigureAwait(false);
 
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -565,10 +620,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       TimeSpan timeout,
       CancellationToken cancellationToken = default)
   {
-    if (!IsConnected)
-    {
-      throw new InvalidOperationException("Not connected");
-    }
+    await EnsureConnectedForSendAsync(cancellationToken).ConfigureAwait(false);
 
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -639,10 +691,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   /// <param name="cancellationToken">キャンセレーショントークン</param>
   public async Task SendOneWayAsync(Message message, CancellationToken cancellationToken = default)
   {
-    if (!IsConnected)
-    {
-      throw new InvalidOperationException("Not connected");
-    }
+    await EnsureConnectedForSendAsync(cancellationToken).ConfigureAwait(false);
 
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -674,6 +723,42 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   {
     var encoding = TcpMessageUtils.GetEncoding(_config.Encoding);
     return SendOneWayAsync(Message.FromString(text, encoding), cancellationToken);
+  }
+
+  /// <summary>
+  /// 送信前の接続確認。未接続の場合、WaitForConnectionOnSend が有効なら
+  /// 再接続のバックオフ待機を中断して接続確立を待ち、無効なら従来どおり例外を投げる。
+  /// </summary>
+  /// <exception cref="InvalidOperationException">未接続かつ WaitForConnectionOnSend が無効の場合</exception>
+  /// <exception cref="TimeoutException">WaitForConnectionOnSend 有効時、タイムアウトまでに接続が確立しなかった場合</exception>
+  private async Task EnsureConnectedForSendAsync(CancellationToken cancellationToken)
+  {
+    if (IsConnected)
+    {
+      return;
+    }
+
+    bool waitForConnection;
+    int waitTimeoutMs;
+    lock (_configLock)
+    {
+      waitForConnection = _config.WaitForConnectionOnSend;
+      waitTimeoutMs = _config.WaitForConnectionTimeoutMilliseconds;
+    }
+
+    if (!waitForConnection)
+    {
+      throw new InvalidOperationException("Not connected");
+    }
+
+    if (waitTimeoutMs <= 0)
+    {
+      throw new InvalidOperationException(
+          $"{nameof(ClientConfig.WaitForConnectionTimeoutMilliseconds)} must be greater than zero");
+    }
+
+    InterruptReconnectDelay();
+    await WaitForConnectionAsync(TimeSpan.FromMilliseconds(waitTimeoutMs), cancellationToken).ConfigureAwait(false);
   }
 
   private async Task<Message> SendAndWaitSingleAsync(

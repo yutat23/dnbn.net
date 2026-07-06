@@ -63,6 +63,21 @@ partial class TcpClient
           // 統計情報を更新
           Interlocked.Increment(ref _stats.MessagesSent);
 
+          // メッセージトレース（種別はリクエストの構成から判定）
+          var traceKind = request.ResponseTcs != null ? MessageTraceKind.Request
+              : request.SendCompletedTcs != null ? MessageTraceKind.OneWay
+              : MessageTraceKind.KeepAlive;
+          // 終端文字を含め、実際にトランスポートへ渡したバイト列を記録する。
+          var traceMessage = new Message
+          {
+            RawData = dataToSend,
+            Text = TcpMessageUtils.GetEncoding(_config.Encoding).GetString(dataToSend),
+            Code = filteredMessage.Code,
+            Timestamp = filteredMessage.Timestamp,
+            Metadata = filteredMessage.Metadata,
+          };
+          RaiseMessageTrace(MessageTraceDirection.Sent, traceKind, traceMessage);
+
           // 送信完了を通知（通知電文の送信元へ）
           request.SendCompletedTcs?.TrySetResult();
         }

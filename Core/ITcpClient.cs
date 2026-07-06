@@ -57,6 +57,19 @@ public interface ITcpClient : IDisposable
   event EventHandler<(ConnectionState previous, ConnectionState current)>? OnConnectionStateChanged;
 
   /// <summary>
+  /// メッセージトレースイベント（診断用）。
+  /// OnMessageReceived と異なり、SendAsync の応答・KeepAlive を含む全送受信を観測できる。
+  /// ハンドラ未登録時のオーバーヘッドはほぼゼロ。
+  /// </summary>
+  event EventHandler<MessageTraceEvent>? OnMessageTrace
+  {
+    // 既存の独自 ITcpClient 実装を壊さないための既定実装。
+    // TcpClient はこのイベントを独自に実装して実際のトレースを発行する。
+    add { }
+    remove { }
+  }
+
+  /// <summary>
   /// メッセージ受信のObservable
   /// </summary>
   IObservable<Message> MessageReceived { get; }
@@ -192,6 +205,4 @@ public interface ITcpClient : IDisposable
   /// <exception cref="TimeoutException">タイムアウト時間内に接続が確立されなかった場合</exception>
   Task WaitForConnectionAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
 }
-
-
 

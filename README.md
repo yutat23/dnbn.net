@@ -22,6 +22,8 @@ TCP の独自電文を .NET から扱うためのメッセージ送受信ライ�
 - メッセージフィルターパイプライン
 - 接続状態と統計情報の取得
 - `ConnectionState` と `OnConnectionStateChanged` による接続状態遷移の観測（自動再接続中の検知）
+- `OnMessageTrace` による要求・応答・通知・KeepAliveを含む送受信診断
+- Generic Host連動の名前付きクライアント登録・自動接続/切断
 - オプションの Web UI パッケージ
 
 ## インストール
@@ -301,7 +303,7 @@ dotnet run --project Samples/TcpMessenger.Sample -- 1
 | 4 | KeepAlive と死活監視 |
 | 5 | Shift-JIS、固定長、長さフィールド方式 |
 | 6 | タイムアウト、リトライ、応答マッチング |
-| 7 | フィルター、統計情報、Web UI |
+| 7 | フィルター、統計情報、メッセージ履歴・送信を含む Web UI |
 | 8 | appsettings.json と DI の対話プレイグラウンド |
 
 詳細は [Samples/TcpMessenger.Sample/README.md](./Samples/TcpMessenger.Sample/README.md) を参照してください。

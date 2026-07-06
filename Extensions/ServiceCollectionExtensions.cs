@@ -64,6 +64,51 @@ public static class ServiceCollectionExtensions
   }
 
   /// <summary>
+  /// 設定に定義された全クライアントを Hosted Service として登録する。
+  /// アプリ起動時に自動接続（バックグラウンド、ConnectionRetryPolicy に従いリトライ）、
+  /// シャットダウン時に自動切断する。
+  /// あわせて各クライアントを keyed singleton（キー = クライアント名）として登録するため、
+  /// <c>GetRequiredKeyedService&lt;ITcpClient&gt;("Name")</c> や
+  /// <see cref="IDnbnClientCollection"/> で取得できる。
+  /// <see cref="AddDnbnNet(IServiceCollection, IConfiguration)"/> の後に呼び出すこと。
+  /// </summary>
+  /// <param name="services">サービスコレクション</param>
+  /// <param name="configuration">設定（dnbn.net または TcpMessenger セクションを含むもの）</param>
+  public static IServiceCollection AddDnbnNetHostedClients(
+      this IServiceCollection services,
+      IConfiguration configuration)
+  {
+    // AddDnbnNet と同じ優先順位でセクションを解決する
+    var section = configuration.GetSection("dnbn.net");
+    if (!section.Exists())
+    {
+      section = configuration.GetSection("TcpMessenger");
+    }
+
+    var names = new List<string>();
+    foreach (var child in section.GetSection("Clients").GetChildren())
+    {
+      var name = child["Name"];
+      if (!string.IsNullOrEmpty(name) && !names.Contains(name))
+      {
+        names.Add(name);
+      }
+    }
+
+    foreach (var name in names)
+    {
+      // ファクトリー経由で生成し、名前ごとに単一インスタンスを保証する
+      services.AddKeyedSingleton<ITcpClient>(name,
+          (sp, key) => sp.GetRequiredService<ITcpMessengerFactory>().CreateClient((string)key!));
+    }
+
+    services.AddSingleton<IDnbnClientCollection>(sp => new DnbnClientCollection(sp, names));
+    services.AddHostedService<DnbnClientsHostedService>();
+
+    return services;
+  }
+
+  /// <summary>
   /// TCP Messengerサービスを登録
   /// </summary>
   /// <remarks>
