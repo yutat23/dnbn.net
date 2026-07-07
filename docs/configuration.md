@@ -14,6 +14,113 @@
 }
 ```
 
+## フル設定サンプル
+
+JSON/XML設定で指定できるすべてのプロパティを記載したサンプルです。各プロパティの意味は後続のリファレンスを参照してください。
+
+メッセージの区切り方式は「終端文字方式」（`MessageTerminator` / `ReceiveMessageTerminator`）と「固定長/長さフィールド方式」（`FixedHeaderLength` / `FixedBodyLength` / `LengthFieldOffset` / `LengthFieldLength`）のどちらか一方を使います。以下では前者を `TerminatorServer` / `TerminatorClient`、後者を `LengthFieldServer` / `LengthFieldClient` として示します。
+
+```json
+{
+  "dnbn.net": {
+    "Servers": [
+      {
+        "Name": "TerminatorServer",
+        "ListenPort": 5000,
+        "Encoding": "UTF-8",
+        "MessageTerminator": "\r\n",
+        "ReceiveMessageTerminator": [ "\r\n", "\n" ],
+        "ClientIdentification": "SourceEndpoint",
+        "EnableMessageLogging": true,
+        "MaxReceiveBufferBytes": 1048576,
+        "TcpKeepAlive": {
+          "Enabled": true,
+          "TimeSeconds": 60,
+          "IntervalSeconds": 10,
+          "RetryCount": 5
+        }
+      },
+      {
+        "Name": "LengthFieldServer",
+        "ListenPort": 5001,
+        "Encoding": "Shift-JIS",
+        "ClientIdentification": "HeaderBased",
+        "FixedHeaderLength": 8,
+        "LengthFieldOffset": 4,
+        "LengthFieldLength": 4,
+        "EnableMessageLogging": false,
+        "MaxReceiveBufferBytes": 1048576
+      }
+    ],
+    "Clients": [
+      {
+        "Name": "TerminatorClient",
+        "RemoteHost": "192.168.1.10",
+        "RemotePort": 5000,
+        "Encoding": "UTF-8",
+        "MessageTerminator": "\r\n",
+        "ReceiveMessageTerminator": [ "\r\n", "\n" ],
+        "TimeoutMilliseconds": 5000,
+        "SendQueueCapacity": 1000,
+        "WaitForConnectionOnSend": true,
+        "WaitForConnectionTimeoutMilliseconds": 10000,
+        "EnableMessageLogging": true,
+        "MaxReceiveBufferBytes": 1048576,
+        "RetryPolicy": {
+          "MaxRetryCount": 3,
+          "RetryDelayStrategy": "Exponential",
+          "InitialDelayMs": 500,
+          "MaxDelayMs": 60000,
+          "FailOnTimeout": true,
+          "FailOnErrorResponse": true
+        },
+        "ConnectionRetryPolicy": {
+          "MaxRetryCount": -1,
+          "RetryDelayStrategy": "Exponential",
+          "InitialDelayMs": 1000,
+          "MaxDelayMs": 30000
+        },
+        "KeepAlive": {
+          "Enabled": true,
+          "IntervalSeconds": 30,
+          "Message": "PING"
+        },
+        "TcpKeepAlive": {
+          "Enabled": true,
+          "TimeSeconds": 60,
+          "IntervalSeconds": 10,
+          "RetryCount": 5
+        }
+      },
+      {
+        "Name": "LengthFieldClient",
+        "RemoteHost": "192.168.1.20",
+        "RemotePort": 5001,
+        "Encoding": "Shift-JIS",
+        "FixedHeaderLength": 8,
+        "FixedBodyLength": 128,
+        "TimeoutMilliseconds": 3000
+      }
+    ],
+    "WebUI": {
+      "Enabled": true,
+      "Port": 8080,
+      "UpdateIntervalSeconds": 1,
+      "BindAddress": "localhost",
+      "EnableLogging": true,
+      "EventTimelineCapacity": 200,
+      "EnableMessageHistory": true,
+      "MessageHistoryCapacity": 200,
+      "MessageHistoryMaxPayloadBytes": 512,
+      "AllowSendFromUI": true,
+      "SendAuthToken": "your-secret-token"
+    }
+  }
+}
+```
+
+`ClientConfig.NotificationPredicate` と `KeepAliveConfig.ResponsePredicate` はコード専用のプロパティのため、このサンプルには含まれていません。
+
 ## ServerConfig
 
 `dnbn.net.Servers` に設定します。`Name` は `ITcpMessengerFactory.CreateServer(name)` で使う識別子です。
