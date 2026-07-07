@@ -54,33 +54,19 @@ partial class TcpClient
             _stats.LastMessageReceivedAt = DateTime.UtcNow;
           }
 
-          // キープアライブ応答をチェック（優先的に処理）
           bool handled = false;
-          var keepAliveTcs = Volatile.Read(ref _keepAliveResponseTcs);
-          if (keepAliveTcs != null && IsKeepAliveResponse(filteredMessage) &&
-              Interlocked.CompareExchange(ref _keepAliveResponseTcs, null, keepAliveTcs) == keepAliveTcs)
-          {
-            keepAliveTcs.TrySetResult(filteredMessage);
-            lock (_statsLock)
-            {
-              _stats.LastKeepAliveResponseReceivedAt = DateTime.UtcNow;
-            }
-            RaiseMessageTrace(MessageTraceDirection.Received, MessageTraceKind.KeepAliveResponse, filteredMessage);
-            OnKeepAliveResponseReceived?.Invoke(this, filteredMessage);
-            handled = true;
-          }
 
           // 通知電文をチェック（応答マッチングをスキップして通常配信へ）
-          bool isNotification = !handled && IsNotificationMessage(filteredMessage);
+          bool isNotification = IsNotificationMessage(filteredMessage);
 
           // 待機中のリクエストをFIFO順序でチェック
           if (!handled && !isNotification)
           {
             SendRequest? matchedRequest = null;
-            List<SendRequest>? timedOutRequests = null;
             lock (_pendingResponseRequestsLock)
             {
-              // 完了済み・タイムアウトしたリクエストを削除（O(1) ノード削除）
+              // 完了済み・タイムアウトしたリクエストを削除（O(1) ノード削除）。
+              // KeepAliveのタイムアウトはSendKeepAliveAsyncが実送信完了を基準に管理するため対象外
               var now = DateTime.UtcNow;
               var node = _pendingResponseRequests.First;
               while (node != null)
@@ -92,50 +78,64 @@ partial class TcpClient
                   // 完了済み（キャンセル等）はそのまま除去
                   _pendingResponseRequests.Remove(node);
                 }
-                else if (req.ResponseTcs != null && now - req.EnqueuedAt >= req.Timeout)
+                else if (req.ResponseTcs != null && !req.IsKeepAlive && now - req.EnqueuedAt >= req.Timeout)
                 {
                   _pendingResponseRequests.Remove(node);
-                  (timedOutRequests ??= new List<SendRequest>()).Add(req);
+                  req.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds"));
                 }
                 node = next;
               }
 
-              // FIFO順序で応答をマッチング（O(1) ノード削除）
-              node = _pendingResponseRequests.First;
-              while (node != null)
+              // FIFO順序で応答をマッチング（O(1) ノード削除）。
+              // 並行するタイムアウトとの競合を防ぐため、TCSの完了（TrySetResult）まで
+              // このロック内で行い、成功した場合のみマッチとして扱う。
+              // KeepAliveタイムアウト検出後（切断進行中）はFIFO相関を信頼できないため
+              // マッチングを行わない（遅延KeepAlive応答が後続要求の応答として誤配されるのを防ぐ）
+              if (!_responseMatchingSuspended)
               {
-                var next = node.Next;
-                var req = node.Value;
-                if (req.ResponseTcs != null && !req.ResponseTcs.Task.IsCompleted)
+                node = _pendingResponseRequests.First;
+                while (node != null)
                 {
-                  if (req.ResponsePredicate == null || req.ResponsePredicate(filteredMessage))
+                  var next = node.Next;
+                  var req = node.Value;
+                  if (req.ResponseTcs != null &&
+                      (req.ResponsePredicate == null || req.ResponsePredicate(filteredMessage)))
                   {
                     _pendingResponseRequests.Remove(node);
-                    matchedRequest = req;
-                    handled = true;
-                    break;
+                    if (req.ResponseTcs.TrySetResult(filteredMessage))
+                    {
+                      matchedRequest = req;
+                      handled = true;
+                      break;
+                    }
+                    // 完了で負けた（並行タイムアウト等）場合は次の待機リクエストを探す
                   }
+                  node = next;
                 }
-                node = next;
               }
             }
 
-            if (timedOutRequests != null)
-            {
-              foreach (var req in timedOutRequests)
-              {
-                req.ResponseTcs?.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds"));
-              }
-            }
-
+            // イベント配送はTrySetResultに成功したリクエストに対してのみ行う
             if (matchedRequest != null)
             {
-              RaiseMessageTrace(
-                  MessageTraceDirection.Received,
-                  MessageTraceKind.Response,
-                  filteredMessage,
-                  (DateTime.UtcNow - matchedRequest.EnqueuedAt).TotalMilliseconds);
-              matchedRequest.ResponseTcs?.TrySetResult(filteredMessage);
+              if (matchedRequest.IsKeepAlive)
+              {
+                // KeepAlive応答（KeepAliveは通常要求と同じFIFOキューで応答と相関させる）
+                lock (_statsLock)
+                {
+                  _stats.LastKeepAliveResponseReceivedAt = DateTime.UtcNow;
+                }
+                RaiseMessageTrace(MessageTraceDirection.Received, MessageTraceKind.KeepAliveResponse, filteredMessage);
+                RaiseKeepAliveResponseReceived(filteredMessage);
+              }
+              else
+              {
+                RaiseMessageTrace(
+                    MessageTraceDirection.Received,
+                    MessageTraceKind.Response,
+                    filteredMessage,
+                    (DateTime.UtcNow - matchedRequest.EnqueuedAt).TotalMilliseconds);
+              }
             }
           }
 
@@ -236,16 +236,38 @@ partial class TcpClient
   /// 接続世代が変わっていない場合のみ切断処理を実行する。
   /// 世代チェックは_disconnectLock内で行うため、新しい接続の確立処理と競合しない。
   /// </summary>
-  private async Task DisconnectIfCurrentEpochAsync(int epoch, bool isIntentional)
+  /// <returns>切断処理を実行した場合は true、世代が変わっていて何もしなかった場合は false</returns>
+  private async Task<bool> DisconnectIfCurrentEpochAsync(
+      int epoch,
+      bool isIntentional,
+      CancellationToken? expectedConnectionToken = null)
   {
     await _disconnectLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
     try
     {
       if (Volatile.Read(ref _connectionEpoch) != epoch)
       {
-        return;
+        return false;
       }
+
+      if (Volatile.Read(ref _lastDisconnectedEpoch) == epoch)
+      {
+        return false;
+      }
+
+      // KeepAliveタイムアウトからの障害切断では、同じepochでも手動切断が
+      // 先に始まっている、または対象接続のトークンが失効している場合がある。
+      // その場合は現在のライフサイクル処理に任せ、二重切断・意図しない再接続を避ける。
+      if (expectedConnectionToken.HasValue &&
+          (_isIntentionalDisconnect ||
+           expectedConnectionToken.Value.IsCancellationRequested ||
+           expectedConnectionToken.Value != _cancellationTokenSource.Token))
+      {
+        return false;
+      }
+
       await DisconnectCoreAsync(isIntentional, CancellationToken.None).ConfigureAwait(false);
+      return true;
     }
     finally
     {
@@ -253,15 +275,29 @@ partial class TcpClient
     }
   }
 
-  private bool IsKeepAliveResponse(Message message)
+  /// <summary>
+  /// OnKeepAliveResponseReceivedを購読者単位の例外隔離付きで発火する
+  /// （ある購読者の例外で受信ループや他の購読者を止めない）
+  /// </summary>
+  private void RaiseKeepAliveResponseReceived(Message message)
   {
-    Func<Message, bool>? responsePredicate;
-    lock (_configLock)
+    var handler = OnKeepAliveResponseReceived;
+    if (handler == null)
     {
-      responsePredicate = _config.KeepAlive?.ResponsePredicate;
+      return;
     }
 
-    return responsePredicate?.Invoke(message) ?? true;
+    foreach (EventHandler<Message> subscriber in handler.GetInvocationList())
+    {
+      try
+      {
+        subscriber.Invoke(this, message);
+      }
+      catch (Exception ex)
+      {
+        _logger?.LogError(ex, "OnKeepAliveResponseReceived handler threw an exception in client {Name}", Name);
+      }
+    }
   }
 
   private bool IsNotificationMessage(Message message)

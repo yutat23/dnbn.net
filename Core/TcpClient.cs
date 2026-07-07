@@ -27,14 +27,21 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   // 接続世代。新しい接続が確立されるたびに増加し、旧接続の受信ループ後始末が
   // 新しい接続を巻き添えで切断しないためのガードとして使用する
   private int _connectionEpoch;
+  // 同じ接続世代に対する切断後始末の二重実行を防ぐ。
+  // 自動再接続がtransport接続済み・epoch更新前の間でも、旧受信ループの
+  // 後始末が新しいtransportを切断しないために使用する。
+  private int _lastDisconnectedEpoch = -1;
   private readonly LinkedList<SendRequest> _pendingResponseRequests = new();
   private readonly object _pendingResponseRequestsLock = new();
+  // KeepAliveタイムアウト検出後、切断が完了するまでの間はFIFO相関を信頼できない
+  // （遅延KeepAlive応答が後続要求の応答として誤配されうる）ため、応答マッチングを停止する。
+  // _pendingResponseRequestsLock で保護し、切断完了・再接続時にリセットする
+  private bool _responseMatchingSuspended;
   private CancellationTokenSource? _keepAliveTimerCts;
   private CancellationTokenSource _cancellationTokenSource = new();
   private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
-  private TaskCompletionSource<Message>? _keepAliveResponseTcs;
-  private bool _isIntentionalDisconnect = false;
+  private volatile bool _isIntentionalDisconnect = false;
   private Task? _reconnectTask;
   private CancellationTokenSource? _reconnectCts;
   private readonly object _reconnectLock = new();
@@ -275,7 +282,17 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     // メッセージ境界がずれるためクリアする
     _parser.Clear();
     _isIntentionalDisconnect = false;
-    Interlocked.Exchange(ref _keepAliveResponseTcs, null)?.TrySetCanceled();
+    // 前回接続の応答待ちリクエスト（KeepAlive含む）が残っていればキャンセルする。
+    // 残したままにすると新しい接続の最初の応答を旧リクエストが横取りする
+    lock (_pendingResponseRequestsLock)
+    {
+      foreach (var request in _pendingResponseRequests)
+      {
+        request.ResponseTcs?.TrySetCanceled();
+      }
+      _pendingResponseRequests.Clear();
+      _responseMatchingSuspended = false;
+    }
     _sendLoopTask = null;
     _receiveLoopTask = null;
   }
@@ -481,6 +498,13 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   {
     cancellationToken.ThrowIfCancellationRequested();
 
+    // KeepAliveタイムアウトなどの障害切断と競合した場合でも、その後に
+    // 自動再接続で接続を復活させないよう、ユーザーの切断意図を待機前に公開する。
+    if (isIntentional)
+    {
+      _isIntentionalDisconnect = true;
+    }
+
     // 意図的な切断の場合は、進行中の自動再接続を中断する
     // （NW障害起因の内部呼び出しでは再接続を止めない）
     if (isIntentional)
@@ -562,12 +586,13 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
         request.ResponseTcs.TrySetCanceled();
       }
       _pendingResponseRequests.Clear();
+      // 切断完了により相関不能状態は解消される（受信ループは停止済みで、次の接続では新たに相関が始まる）
+      _responseMatchingSuspended = false;
     }
-
-    Interlocked.Exchange(ref _keepAliveResponseTcs, null)?.TrySetCanceled();
 
     // 接続試行中（Connecting/Reconnecting）に切断された場合も含めて未接続へ遷移させる
     SetConnectionState(ConnectionState.Disconnected);
+    Volatile.Write(ref _lastDisconnectedEpoch, Volatile.Read(ref _connectionEpoch));
 
     if (!wasConnected)
     {
@@ -778,18 +803,17 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       CancellationToken = cancellationToken
     };
 
-    // タイムアウト処理
+    // タイムアウト処理。受信ループのマッチングと競合しないよう、
+    // TCSの完了とpending除去をロック内で行う
     using var timeoutCts = new CancellationTokenSource(timeout);
     timeoutCts.Token.Register(() =>
     {
-      if (!tcs.Task.IsCompleted)
+      lock (_pendingResponseRequestsLock)
       {
-        // キューから削除
-        lock (_pendingResponseRequestsLock)
+        if (tcs.TrySetException(new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds")))
         {
           _pendingResponseRequests.Remove(request);
         }
-        tcs.TrySetException(new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds"));
       }
     });
 
@@ -1113,6 +1137,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     public DateTime EnqueuedAt { get; set; }
     public CancellationToken CancellationToken { get; set; }
     public TaskCompletionSource? SendCompletedTcs { get; set; } // 送信完了通知（通知電文用）
+    public bool IsKeepAlive { get; set; } // KeepAlive電文（応答はOnKeepAliveResponseReceivedへ配送される）
   }
 
 }

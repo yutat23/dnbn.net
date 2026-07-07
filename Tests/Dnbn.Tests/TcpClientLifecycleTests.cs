@@ -76,6 +76,34 @@ public class TcpClientLifecycleTests
   }
 
   [Fact]
+  public async Task Reconnect_StalePendingRequest_DoesNotStealResponseAfterReconnect()
+  {
+    // NW障害時に応答待ちだった旧リクエストはキャンセルされ、
+    // 再接続後の最初の応答を横取りしないこと
+    var transport = new MockTransport();
+    await using var client = new TcpClient(CreateConfig(), transport);
+
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    client.OnMessageReceived += (_, msg) => receivedTcs.TrySetResult(msg.Text?.Trim() ?? "");
+
+    await client.ConnectAsync();
+
+    // 応答待ちのリクエストを作ってからNW障害で切断
+    var sendTask = client.SendAsync(Message.FromString("request1", Encoding.UTF8), TimeSpan.FromSeconds(10));
+    await TestWait.UntilSentAsync(transport, "request1");
+    transport.SimulateDisconnect();
+
+    // 切断処理で旧リクエストはキャンセルされること
+    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+    await TestWait.UntilAsync(() => client.State == ConnectionState.Disconnected);
+
+    // 再接続後の最初の受信は、旧リクエストの応答ではなく通常配信になること
+    await client.ConnectAsync();
+    transport.EnqueueReceiveData("late_response");
+    Assert.Equal("late_response", await receivedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+  }
+
+  [Fact]
   public async Task Reconnect_MultipleCycles_RemainsFunctional()
   {
     var transport = new MockTransport();

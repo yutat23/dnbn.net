@@ -13,6 +13,13 @@ partial class TcpClient
   {
     lock (_reconnectLock)
     {
+      // ユーザーが切断・破棄を開始した後に、直前のNW障害やKeepAlive
+      // タイムアウト処理が接続を復活させないようにする。
+      if (_isIntentionalDisconnect || _disposed)
+      {
+        return;
+      }
+
       // 既に再接続タスクが実行中の場合は、新しいタスクを開始しない
       if (_reconnectTask != null && !_reconnectTask.IsCompleted)
       {

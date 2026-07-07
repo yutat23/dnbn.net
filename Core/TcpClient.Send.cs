@@ -32,6 +32,8 @@ partial class TcpClient
           // 後から届くと応答の対応関係が崩れるため）
           if (request.ResponseTcs != null && request.ResponseTcs.Task.IsCompleted)
           {
+            // 送信完了待ちがある場合（KeepAlive等）は待機側を解放する
+            request.SendCompletedTcs?.TrySetCanceled();
             continue;
           }
 
@@ -62,11 +64,19 @@ partial class TcpClient
 
           // 統計情報を更新
           Interlocked.Increment(ref _stats.MessagesSent);
+          if (request.IsKeepAlive)
+          {
+            // KeepAlive送信時刻は実際にソケットへ書き込んだ時点を記録する
+            lock (_statsLock)
+            {
+              _stats.LastKeepAliveSentAt = DateTime.UtcNow;
+            }
+          }
 
           // メッセージトレース（種別はリクエストの構成から判定）
-          var traceKind = request.ResponseTcs != null ? MessageTraceKind.Request
-              : request.SendCompletedTcs != null ? MessageTraceKind.OneWay
-              : MessageTraceKind.KeepAlive;
+          var traceKind = request.IsKeepAlive ? MessageTraceKind.KeepAlive
+              : request.ResponseTcs != null ? MessageTraceKind.Request
+              : MessageTraceKind.OneWay;
           // 終端文字を含め、実際にトランスポートへ渡したバイト列を記録する。
           var traceMessage = new Message
           {
@@ -83,27 +93,28 @@ partial class TcpClient
         }
         catch (OperationCanceledException)
         {
-          // キャンセルされた場合は、応答待ちのリクエストをキャンセル
+          // キャンセルされた場合は、応答待ちのリクエストをキャンセル。
+          // 受信ループのマッチングと競合しないよう、TCSの完了はpendingロック内で行う
           if (request.ResponseTcs != null)
           {
             lock (_pendingResponseRequestsLock)
             {
               _pendingResponseRequests.Remove(request);
+              request.ResponseTcs.TrySetCanceled();
             }
-            request.ResponseTcs.TrySetCanceled();
           }
           request.SendCompletedTcs?.TrySetCanceled();
         }
         catch (Exception ex)
         {
-          // エラーハンドリング
+          // エラーハンドリング（TCSの完了はpendingロック内で行う）
           if (request.ResponseTcs != null)
           {
             lock (_pendingResponseRequestsLock)
             {
               _pendingResponseRequests.Remove(request);
+              request.ResponseTcs.TrySetException(ex);
             }
-            request.ResponseTcs.TrySetException(ex);
           }
           request.SendCompletedTcs?.TrySetException(ex);
           _logger?.LogError(ex, "Error sending message in client {Name}", Name);

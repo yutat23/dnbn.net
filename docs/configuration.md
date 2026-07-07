@@ -83,7 +83,8 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
         "KeepAlive": {
           "Enabled": true,
           "IntervalSeconds": 30,
-          "Message": "PING"
+          "Message": "PING",
+          "DisconnectOnTimeout": true
         },
         "TcpKeepAlive": {
           "Enabled": true,
@@ -186,10 +187,13 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
 | プロパティ | 型 | 既定値 | 説明 |
 |---|---:|---:|---|
 | `Enabled` | `bool` | `false` | KeepAliveを有効にする |
-| `IntervalSeconds` | `int` | `30` | 送信間隔 |
+| `IntervalSeconds` | `int` | `30` | 送信間隔（応答タイムアウトも同じ値） |
 | `Message` | `string` | `""` | 送信するKeepAliveメッセージ |
+| `DisconnectOnTimeout` | `bool` | `true` | 応答タイムアウト時に切断する。NW障害扱いとなり、`ConnectionRetryPolicy` 設定時は自動再接続する |
 
 `ResponsePredicate` はコードから設定するプロパティです。JSON/XML設定には含められません。
+
+KeepAliveの応答は通常要求と同じFIFO順で相関され、通常要求が応答待ちの間はKeepAlive送信自体が延期されます。`DisconnectOnTimeout` の既定値は `true` です。応答がない接続はFIFO相関を信頼できないため切断し、遅延したKeepAlive応答が後続の通常要求へ誤配されるのを防ぎます。従来どおり接続を維持する必要がある場合だけ `false` を明示してください。
 
 ## TcpKeepAliveConfig
 

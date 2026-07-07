@@ -16,12 +16,12 @@ partial class TcpClient
 
       if (_config.KeepAlive.ResponsePredicate == null)
       {
-        // 述語未設定時はKeepAlive待機中に届いた任意の受信メッセージを応答として扱うため、
-        // 通常のリクエスト応答を横取りする可能性がある（互換性のため挙動は維持）
+        // 述語未設定時、KeepAlive応答はFIFO順で「次に届いた応答」として相関される。
+        // 要求・応答が順序どおりに返るプロトコルでは正しく動作するが、
+        // KeepAlive応答待ち中に届いたサーバープッシュ通知はKeepAlive応答として消費される
         _logger?.LogWarning(
             "TCP Client '{Name}' KeepAlive is enabled without ResponsePredicate. " +
-            "While a keep-alive is pending, any received message will be consumed as the keep-alive response, " +
-            "which may steal responses to in-flight SendAsync requests. " +
+            "While a keep-alive is awaiting its response, an unsolicited push message may be consumed as the keep-alive response. " +
             "Set KeepAliveConfig.ResponsePredicate to distinguish keep-alive responses.", Name);
       }
 
@@ -64,6 +64,19 @@ partial class TcpClient
             encodingName = _config.Encoding;
           }
 
+          // 通常要求が応答待ちの間はKeepAliveを延期する。
+          // 電文が流れている間は死活確認が不要であり、FIFO相関の取り違え
+          // （KeepAlive応答と通常応答の混線）も避けられる
+          bool hasPendingUserRequests;
+          lock (_pendingResponseRequestsLock)
+          {
+            hasPendingUserRequests = _pendingResponseRequests.Any(r => !r.IsKeepAlive);
+          }
+          if (hasPendingUserRequests)
+          {
+            continue;
+          }
+
           var keepAliveMessage = Message.FromString(
               messageText,
               TcpMessageUtils.GetEncoding(encodingName));
@@ -97,8 +110,11 @@ partial class TcpClient
   }
 
   /// <summary>
-  /// キープアライブ専用の送信・応答待ちメソッド
-  /// 通常のリクエスト応答と混在しないように、専用のTaskCompletionSourceを使用
+  /// KeepAlive電文を送信し、応答を待つ。
+  /// KeepAliveは通常要求と同じ送信キュー・FIFO応答キューに載せ、
+  /// 応答タイムアウトは実送信の完了時点から計測する。これにより
+  /// 先行する通常要求の応答の横取りや、送信前タイムアウトによる孤児応答が発生しない。
+  /// 応答受信時の処理（統計更新・OnKeepAliveResponseReceived発火）はReceiveLoopCoreAsyncが行う。
   /// </summary>
   private async Task SendKeepAliveAsync(Message keepAliveMessage, TimeSpan timeout)
   {
@@ -107,63 +123,96 @@ partial class TcpClient
       return;
     }
 
-    // キープアライブ応答用のTaskCompletionSourceを作成
-    var tcs = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var previousTcs = Interlocked.Exchange(ref _keepAliveResponseTcs, tcs);
-
-    // 前のキープアライブがまだ待機中の場合はキャンセル
-    if (previousTcs != null)
+    Func<Message, bool>? responsePredicate;
+    bool disconnectOnTimeout;
+    lock (_configLock)
     {
-      previousTcs.TrySetCanceled();
+      responsePredicate = _config.KeepAlive?.ResponsePredicate;
+      disconnectOnTimeout = _config.KeepAlive?.DisconnectOnTimeout ?? true;
     }
+
+    var connectionToken = _cancellationTokenSource.Token;
+    var epoch = Volatile.Read(ref _connectionEpoch);
+    var tcs = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var sendCompletedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var request = new SendRequest
+    {
+      Message = keepAliveMessage,
+      ResponseTcs = tcs,
+      // 未設定（null）は任意の応答にマッチ（従来の既定挙動を維持）
+      ResponsePredicate = responsePredicate,
+      Timeout = timeout,
+      IsKeepAlive = true,
+      SendCompletedTcs = sendCompletedTcs,
+      EnqueuedAt = DateTime.UtcNow,
+      CancellationToken = connectionToken
+    };
 
     try
     {
-      // キープアライブ送信時刻を更新
-      lock (_statsLock)
-      {
-        _stats.LastKeepAliveSentAt = DateTime.UtcNow;
-      }
+      await _sendQueueWriter.WriteAsync(request, connectionToken);
 
-      // タイムアウト用のキャンセレーショントークン
-      using var cts = new CancellationTokenSource(timeout);
-      cts.Token.Register(() =>
+      // 実送信の完了を待つ（送信失敗・キャンセルはここで例外になる）。
+      // 送信キューやフィルターの遅延で送信前にタイムアウトが走ると、
+      // 後から実送信された電文への応答が孤児になるため、計測は送信完了後に開始する
+      await sendCompletedTcs.Task.WaitAsync(connectionToken);
+
+      // 応答タイムアウト（受信が一切ない場合にも待機を打ち切れるよう、自前のタイマーで管理する。
+      // 受信ループのスイープはKeepAliveを対象にしない）
+      using var timeoutCts = new CancellationTokenSource(timeout);
+      timeoutCts.Token.Register(() =>
       {
-        if (Interlocked.CompareExchange(ref _keepAliveResponseTcs, null, tcs) == tcs)
+        // 受信ループのマッチングと競合しないよう、TCSの完了とpending除去をロック内で行う
+        lock (_pendingResponseRequestsLock)
         {
-          tcs.TrySetCanceled();
+          if (tcs.TrySetException(new TimeoutException($"Keep-alive response timed out after {timeout.TotalSeconds} seconds")))
+          {
+            _pendingResponseRequests.Remove(request);
+            if (disconnectOnTimeout)
+            {
+              // タイムアウト検出と同時に応答マッチングを停止する（切断完了時に解除）。
+              // 切断処理が走り出すまでの間に遅延KeepAlive応答が届いても、
+              // 後続要求の応答として誤配されない
+              _responseMatchingSuspended = true;
+            }
+          }
         }
       });
 
-      // 送信キューに追加（応答待ちはしない）
-      var request = new SendRequest
-      {
-        Message = keepAliveMessage,
-        ResponseTcs = null, // キープアライブは専用のTCSを使用
-        EnqueuedAt = DateTime.UtcNow,
-        CancellationToken = _cancellationTokenSource.Token
-      };
+      await tcs.Task;
+    }
+    catch (TimeoutException)
+    {
+      Interlocked.Increment(ref _stats.KeepAliveTimeoutCount);
 
-      await _sendQueueWriter.WriteAsync(request, _cancellationTokenSource.Token);
-
-      // 応答を待つ（タイムアウトは無視して続行）
-      try
+      if (disconnectOnTimeout)
       {
-        await tcs.Task;
-        // 応答はReceiveLoopCoreAsyncでOnKeepAliveResponseReceivedイベントが発行される
+        // 応答が来ない接続は相手が死んでいるか、FIFO相関がもう信頼できない
+        // （遅延応答が後続要求の応答として誤配される）ため、NW障害として切断する。
+        // 接続世代の確認は_disconnectLock内で行われるため、
+        // 既に再接続済みの新しい接続を巻き添えにしない
+        _logger?.LogWarning("Keep-alive response timeout for client {Name}; disconnecting to prevent response correlation corruption (DisconnectOnTimeout=true)", Name);
+        var disconnected = await DisconnectIfCurrentEpochAsync(
+            epoch,
+            isIntentional: false,
+            expectedConnectionToken: connectionToken).ConfigureAwait(false);
+
+        // NW障害切断と同様に自動再接続へ繋ぐ（この間に手動再接続されていれば何もしない）
+        if (disconnected && !_isIntentionalDisconnect && _config.ConnectionRetryPolicy != null &&
+            Volatile.Read(ref _connectionEpoch) == epoch)
+        {
+          _logger?.LogInformation("TCP Client '{Name}' will attempt automatic reconnection to {Host}:{Port}...", Name, _config.RemoteHost, _config.RemotePort);
+          StartAutoReconnect();
+        }
       }
-      catch (TaskCanceledException)
+      else
       {
-        // タイムアウトは無視（キープアライブは継続）
-        Interlocked.Increment(ref _stats.KeepAliveTimeoutCount);
         _logger?.LogWarning("Keep-alive response timeout for client {Name}", Name);
       }
     }
-    catch (Exception)
+    catch (OperationCanceledException)
     {
-      // エラーが発生した場合はTaskCompletionSourceをクリア
-      Interlocked.CompareExchange(ref _keepAliveResponseTcs, null, tcs);
-      throw;
+      // 切断・再接続によるキャンセル（正常系）
     }
   }
 }

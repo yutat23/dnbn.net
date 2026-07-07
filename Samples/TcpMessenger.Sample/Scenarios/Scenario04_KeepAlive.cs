@@ -78,6 +78,7 @@ internal static class Scenario04_KeepAlive
         Enabled = true,
         IntervalSeconds = 2,
         Message = "PING",
+        DisconnectOnTimeout = true,
         ResponsePredicate = msg => msg.Text?.Trim() == "PONG",
       },
     };

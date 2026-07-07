@@ -65,8 +65,9 @@ public class ClientConfig
   /// 通知電文の判定述語。マッチした受信メッセージは応答マッチングをスキップして
   /// OnMessageReceived / MessageReceived(Rx) に直接配信される。
   /// 未設定（null）の場合は従来どおりの動作。
-  /// 注意: キープアライブ応答の判定が先に行われるため、KeepAliveと併用する場合は
-  /// KeepAliveConfig.ResponsePredicate を設定して通知電文と区別すること。
+  /// 注意: この判定はKeepAlive応答を含むすべての応答マッチングより先に行われる。
+  /// 通知電文とKeepAlive応答の両方にマッチする述語を設定すると、KeepAlive応答が
+  /// 通知として配信されてしまうため、両者が重ならないように設定すること。
   /// </summary>
   [System.Text.Json.Serialization.JsonIgnore]
   [System.Xml.Serialization.XmlIgnore]

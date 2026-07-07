@@ -227,12 +227,13 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
   "KeepAlive": {
     "Enabled": true,
     "IntervalSeconds": 30,
-    "Message": "PING"
+    "Message": "PING",
+    "DisconnectOnTimeout": true
   }
 }
 ```
 
-KeepAlive 応答は `OnKeepAliveResponseReceived` で受け取れます。
+KeepAlive 応答は `OnKeepAliveResponseReceived` で受け取れます。`DisconnectOnTimeout` の既定値は `true` です。応答タイムアウト時は遅延応答の誤相関を防ぐため接続を切断し、`ConnectionRetryPolicy` が設定されていれば自動再接続します。
 
 ### メッセージログ
 

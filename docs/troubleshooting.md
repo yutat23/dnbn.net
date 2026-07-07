@@ -34,7 +34,15 @@ TCPはストリームなので、区切り設定が合っていないと複数�
 
 ## KeepAlive応答と通知が混ざる
 
-KeepAlive応答と通常通知を明確に分ける必要がある場合は、コードで `KeepAliveConfig.ResponsePredicate` と `NotificationPredicate` を設定してください。
+KeepAliveは通常要求と同じFIFO応答キューで相関されるため、要求・応答が順序どおりに返るプロトコルでは `SendAsync` の応答を横取りしません。また、通常要求が応答待ちの間はKeepAlive送信自体が延期されます。
+
+ただし `ResponsePredicate` 未設定の場合、KeepAlive応答待ちの間に届いたサーバープッシュ通知はKeepAlive応答として消費されます。プッシュ通知があるプロトコルでは、コードで `KeepAliveConfig.ResponsePredicate` と `NotificationPredicate` を設定してください。`NotificationPredicate` にマッチした電文は、KeepAlive応答を含むすべての応答マッチングより優先して通知として配信されます。
+
+## KeepAliveのタイムアウトで切断される
+
+KeepAlive応答が間隔（`IntervalSeconds`）内に返らない場合、既定では接続を切断します（`DisconnectOnTimeout: true`）。タイムアウト後に遅れて届いたKeepAlive応答が、後続の通常要求の応答として誤って相関されるのを防ぐためです。切断はNW障害として扱われるため、`ConnectionRetryPolicy` が設定されていれば自動再接続します。
+
+タイムアウト後も接続を維持する必要がある場合は `DisconnectOnTimeout: false` を明示できます。ただし、応答内容でKeepAliveを区別できないプロトコルでは遅延応答の誤相関リスクが残ります。
 
 ## 無通信中の切断に気づけない（送信時に初めてエラーになる）
 
@@ -46,4 +54,3 @@ NW障害や中継機器の無通信タイムアウトで接続が切れても、
 ## 受信バッファが大きくなる
 
 終端文字や長さフィールドを設定していない場合、メッセージ境界を判断できずバッファが伸びる可能性があります。プロトコル仕様を見直し、必要に応じて `MaxReceiveBufferBytes` を設定してください。
-
