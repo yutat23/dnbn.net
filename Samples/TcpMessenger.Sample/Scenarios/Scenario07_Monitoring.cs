@@ -36,20 +36,20 @@ internal static class Scenario07_Monitoring
     };
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
-        var received = e.message.Text?.Trim() ?? "";
+        var received = message.Text?.Trim() ?? "";
         if (XorChecksumFilter.TryParse(received, out var payload))
         {
           SampleConsole.Result($"サーバー: チェックサムOK '{received}' → ペイロード '{payload}'");
-          await server.SendAsync(e.sessionInfo.SessionId, XorChecksumFilter.Append($"ACK:{payload}"));
+          await server.SendAsync(sessionInfo.SessionId, XorChecksumFilter.Append($"ACK:{payload}"));
         }
         else
         {
           SampleConsole.Result($"サーバー: チェックサム不正 '{received}'");
-          await server.SendAsync(e.sessionInfo.SessionId, XorChecksumFilter.Append("NAK"));
+          await server.SendAsync(sessionInfo.SessionId, XorChecksumFilter.Append("NAK"));
         }
       }
       catch (Exception ex)

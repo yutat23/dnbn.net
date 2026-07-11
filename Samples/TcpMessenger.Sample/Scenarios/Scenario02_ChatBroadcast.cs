@@ -32,13 +32,13 @@ internal static class Scenario02_ChatBroadcast
     };
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
         // 発言者のセッションIDの先頭部分を名前代わりに付けて全員へ配信
-        var shortId = e.sessionInfo.SessionId.Split('-')[0];
-        await server.BroadcastAsync($"[{shortId}] {e.message.Text?.Trim()}");
+        var shortId = sessionInfo.SessionId.Split('-')[0];
+        await server.BroadcastAsync($"[{shortId}] {message.Text?.Trim()}");
       }
       catch (Exception ex)
       {

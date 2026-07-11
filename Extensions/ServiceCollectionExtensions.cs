@@ -38,10 +38,12 @@ public static class ServiceCollectionExtensions
       throw new InvalidOperationException("設定セクション 'dnbn.net' または 'TcpMessenger' が見つかりません。appsettings.json に設定を追加してください。");
     }
 
-    services.Configure<TcpMessengerConfig>(configSection.Bind);
+    var boundConfig = configSection.Get<TcpMessengerConfig>() ?? new TcpMessengerConfig();
+    TcpMessengerConfigValidator.Validate(boundConfig);
+    services.Configure<TcpMessengerConfig>(options => CopyConfig(boundConfig, options));
 
     // ファクトリーを登録
-    services.AddSingleton<ITcpMessengerFactory, TcpMessengerFactory>();
+    AddFactoryServices(services);
 
     return services;
   }
@@ -53,12 +55,9 @@ public static class ServiceCollectionExtensions
       this IServiceCollection services,
       TcpMessengerConfig config)
   {
-    services.Configure<TcpMessengerConfig>(options =>
-    {
-      options.Servers = config.Servers;
-      options.Clients = config.Clients;
-    });
-    services.AddSingleton<ITcpMessengerFactory, TcpMessengerFactory>();
+    TcpMessengerConfigValidator.Validate(config);
+    services.Configure<TcpMessengerConfig>(options => CopyConfig(config, options));
+    AddFactoryServices(services);
 
     return services;
   }
@@ -74,9 +73,11 @@ public static class ServiceCollectionExtensions
   /// </summary>
   /// <param name="services">サービスコレクション</param>
   /// <param name="configuration">設定（dnbn.net または TcpMessenger セクションを含むもの）</param>
+  /// <param name="connectOnHostStart">Host起動時に自動接続し、停止時に自動切断するか</param>
   public static IServiceCollection AddDnbnNetHostedClients(
       this IServiceCollection services,
-      IConfiguration configuration)
+      IConfiguration configuration,
+      bool connectOnHostStart = true)
   {
     // AddDnbnNet と同じ優先順位でセクションを解決する
     var section = configuration.GetSection("dnbn.net");
@@ -85,27 +86,41 @@ public static class ServiceCollectionExtensions
       section = configuration.GetSection("TcpMessenger");
     }
 
-    var names = new List<string>();
-    foreach (var child in section.GetSection("Clients").GetChildren())
-    {
-      var name = child["Name"];
-      if (!string.IsNullOrEmpty(name) && !names.Contains(name))
-      {
-        names.Add(name);
-      }
-    }
-
+    var clients = section.GetSection("Clients").Get<List<ClientConfig>>() ?? new List<ClientConfig>();
+    TcpMessengerConfigValidator.Validate(new TcpMessengerConfig { Clients = clients });
+    var names = clients.Select(client => client.Name).ToArray();
     foreach (var name in names)
     {
-      // ファクトリー経由で生成し、名前ごとに単一インスタンスを保証する
-      services.AddKeyedSingleton<ITcpClient>(name,
-          (sp, key) => sp.GetRequiredService<ITcpMessengerFactory>().CreateClient((string)key!));
+      var capturedName = name;
+      services.AddKeyedSingleton<ITcpClient>(capturedName,
+          (sp, _) => sp.GetRequiredService<ITcpMessengerFactory>().CreateClient(capturedName));
+    }
+    return AddClientRegistryAndHostedService(services, names, connectOnHostStart);
+  }
+
+  /// <summary>
+  /// 型付き設定で指定したクライアントをkeyed singletonとして登録し、Hostの起動・停止と連動させる。
+  /// DB等から起動時に構成したクライアントにも使用できる。
+  /// </summary>
+  public static IServiceCollection AddDnbnNetHostedClients(
+      this IServiceCollection services,
+      IEnumerable<ClientConfig> clients,
+      bool connectOnHostStart = true)
+  {
+    ArgumentNullException.ThrowIfNull(clients);
+    var configs = clients.Select(client => client.Clone()).ToList();
+    var root = new TcpMessengerConfig { Clients = configs };
+    TcpMessengerConfigValidator.Validate(root);
+    var names = configs.Select(client => client.Name).ToArray();
+
+    foreach (var config in configs)
+    {
+      var capturedConfig = config;
+      services.AddKeyedSingleton<ITcpClient>(capturedConfig.Name,
+          (sp, _) => sp.GetRequiredService<ITypedTcpMessengerFactory>().CreateClient(capturedConfig));
     }
 
-    services.AddSingleton<IDnbnClientCollection>(sp => new DnbnClientCollection(sp, names));
-    services.AddHostedService<DnbnClientsHostedService>();
-
-    return services;
+    return AddClientRegistryAndHostedService(services, names, connectOnHostStart);
   }
 
   /// <summary>
@@ -199,5 +214,34 @@ public static class ServiceCollectionExtensions
       "このメソッドは非推奨です。アプリ側でMicrosoft.Extensions.Logging.Log4Net.AspNetCoreパッケージをインストールし、" +
       "services.AddLogging(builder => builder.AddLog4Net())を呼び出してから、services.AddDnbnNet(config)を使用してください。");
   }
-}
 
+  private static void CopyConfig(TcpMessengerConfig source, TcpMessengerConfig destination)
+  {
+    var clone = source.Clone();
+    destination.Servers = clone.Servers;
+    destination.Clients = clone.Clients;
+    destination.WebUI = clone.WebUI;
+  }
+
+  private static void AddFactoryServices(IServiceCollection services)
+  {
+    services.AddSingleton<TcpMessengerFactory>();
+    services.AddSingleton<ITypedTcpMessengerFactory>(sp => sp.GetRequiredService<TcpMessengerFactory>());
+    services.AddSingleton<ITcpMessengerFactory>(sp => sp.GetRequiredService<TcpMessengerFactory>());
+  }
+
+  private static IServiceCollection AddClientRegistryAndHostedService(
+      IServiceCollection services,
+      IReadOnlyList<string> names,
+      bool connectOnHostStart)
+  {
+    services.AddSingleton<DnbnClientCollection>(sp => new DnbnClientCollection(sp, names));
+    services.AddSingleton<IDnbnClientRegistry>(sp => sp.GetRequiredService<DnbnClientCollection>());
+    services.AddSingleton<IDnbnClientCollection>(sp => sp.GetRequiredService<DnbnClientCollection>());
+    if (connectOnHostStart)
+    {
+      services.AddHostedService<DnbnClientsHostedService>();
+    }
+    return services;
+  }
+}

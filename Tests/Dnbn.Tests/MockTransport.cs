@@ -13,6 +13,7 @@ internal class MockTransport : ITransport
   private readonly List<byte[]> _sentData = new();
   private readonly object _sentLock = new();
   private Exception? _connectException;
+  private byte[]? _responseOnNextSend;
   private bool _dropAfterNextConnect;
   private int _connectCalls;
 
@@ -41,6 +42,15 @@ internal class MockTransport : ITransport
 
   /// <summary>接続時に発生させる例外を設定</summary>
   public void SetConnectException(Exception ex) => _connectException = ex;
+
+  /// <summary>次の送信処理が戻る前に受信データを到着させる。</summary>
+  public void RespondOnNextSend(string text, string terminator = "\n")
+  {
+    lock (_sentLock)
+    {
+      _responseOnNextSend = System.Text.Encoding.UTF8.GetBytes(text + terminator);
+    }
+  }
 
   /// <inheritdoc />
   public Task ConnectAsync(CancellationToken cancellationToken = default)
@@ -77,14 +87,22 @@ internal class MockTransport : ITransport
   }
 
   /// <inheritdoc />
-  public Task SendAsync(byte[] data, CancellationToken cancellationToken = default)
+  public async Task SendAsync(byte[] data, CancellationToken cancellationToken = default)
   {
     cancellationToken.ThrowIfCancellationRequested();
+    byte[]? response;
     lock (_sentLock)
     {
       _sentData.Add(data);
+      response = _responseOnNextSend;
+      _responseOnNextSend = null;
     }
-    return Task.CompletedTask;
+    if (response != null)
+    {
+      _receiveChannel.Writer.TryWrite(response);
+      // 受信ループが送信処理より先に進む競合を決定的に再現する。
+      await Task.Yield();
+    }
   }
 
   /// <inheritdoc />

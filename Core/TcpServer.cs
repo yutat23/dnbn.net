@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
-using System.Reactive.Subjects;
 using Dnbn.Configuration;
 using Dnbn.Filters;
 using Dnbn.Models;
@@ -19,10 +18,14 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   private readonly List<IMessageFilter> _filters;
   private TcpListener? _listener;
   private readonly ConcurrentDictionary<string, ServerSession> _sessions = new();
-  private readonly Subject<(Message message, SessionInfo sessionInfo)> _messageReceivedSubject = new();
+  private readonly SafeObservable<(Message message, SessionInfo sessionInfo)> _messageReceivedSubject = new();
   private CancellationTokenSource _cancellationTokenSource = new();
   private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
+  private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+  private readonly ConcurrentDictionary<long, Task> _clientTasks = new();
+  private Task? _acceptLoopTask;
+  private long _nextClientTaskId;
 
   // 統計情報追跡用フィールド
   private DateTime? _startedAt;
@@ -49,6 +52,9 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   /// メッセージ受信イベント
   /// </summary>
   public event EventHandler<(Message message, SessionInfo sessionInfo)>? OnMessageReceived;
+
+  /// <inheritdoc />
+  public event TcpServerMessageHandler? OnMessageReceivedAsync;
 
   /// <summary>
   /// クライアント接続イベント
@@ -78,7 +84,8 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   /// <param name="filters">メッセージフィルター（オプション）</param>
   public TcpServer(ServerConfig config, ILogger<TcpServer>? logger = null, IEnumerable<IMessageFilter>? filters = null)
   {
-    _config = config;
+    TcpMessengerConfigValidator.ValidateServer(config);
+    _config = config.Clone();
     _logger = logger;
     _filters = filters?.ToList() ?? new List<IMessageFilter>();
   }
@@ -89,43 +96,42 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   /// <param name="cancellationToken">キャンセレーショントークン</param>
   public async Task StartAsync(CancellationToken cancellationToken = default)
   {
-    if (IsRunning)
+    await _lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try
     {
-      return;
-    }
+      ObjectDisposedException.ThrowIf(_disposed, this);
+      if (IsRunning) return;
 
-    cancellationToken.ThrowIfCancellationRequested();
+      cancellationToken.ThrowIfCancellationRequested();
 
-    if (_cancellationTokenSource.IsCancellationRequested)
-    {
-      _cancellationTokenSource.Dispose();
-      _cancellationTokenSource = new CancellationTokenSource();
-    }
-
-    // 既存の登録を破棄
-    _externalCancellationTokenRegistration?.Dispose();
-
-    // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
-    _externalCancellationTokenRegistration = cancellationToken.Register(() =>
-    {
-      if (!_cancellationTokenSource.IsCancellationRequested)
+      if (_cancellationTokenSource.IsCancellationRequested)
       {
-        _cancellationTokenSource.Cancel();
-        _isRunning = false;
-        _listener?.Stop();
+        _cancellationTokenSource.Dispose();
+        _cancellationTokenSource = new CancellationTokenSource();
       }
-    });
 
-    _listener = new TcpListener(IPAddress.Any, _config.ListenPort);
-    _listener.Start();
-    _isRunning = true;
-    lock (_statsLock)
-    {
-      _startedAt = DateTime.UtcNow;
+      _externalCancellationTokenRegistration?.Dispose();
+      var connectionCts = _cancellationTokenSource;
+      var listener = new TcpListener(IPAddress.Parse(_config.BindAddress), _config.ListenPort);
+      listener.Start();
+      _listener = listener;
+      _isRunning = true;
+      lock (_statsLock) _startedAt = DateTime.UtcNow;
+
+      _externalCancellationTokenRegistration = cancellationToken.Register(() =>
+      {
+        if (!connectionCts.IsCancellationRequested) connectionCts.Cancel();
+        listener.Stop();
+        _isRunning = false;
+      });
+
+      _logger?.LogInformation("TCP Server '{Name}' started on port {Port}", Name, _config.ListenPort);
+      _acceptLoopTask = AcceptClientsAsync(listener, connectionCts.Token);
     }
-    _logger?.LogInformation("TCP Server '{Name}' started on port {Port}", Name, _config.ListenPort);
-
-    _ = Task.Run(AcceptClientsAsync, _cancellationTokenSource.Token);
+    finally
+    {
+      _lifecycleLock.Release();
+    }
   }
 
   /// <summary>
@@ -134,48 +140,55 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   /// <param name="cancellationToken">キャンセレーショントークン</param>
   public async Task StopAsync(CancellationToken cancellationToken = default)
   {
-    if (!IsRunning)
+    await _lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+    try
     {
-      return;
+      cancellationToken.ThrowIfCancellationRequested();
+      _externalCancellationTokenRegistration?.Dispose();
+      _externalCancellationTokenRegistration = null;
+      if (!_cancellationTokenSource.IsCancellationRequested) _cancellationTokenSource.Cancel();
+      _isRunning = false;
+      _listener?.Stop();
+      _listener = null;
+
+      if (_acceptLoopTask != null)
+      {
+        try { await _acceptLoopTask.WaitAsync(cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (_cancellationTokenSource.IsCancellationRequested && !cancellationToken.IsCancellationRequested) { }
+        _acceptLoopTask = null;
+      }
+
+      foreach (var session in _sessions.Values.ToList())
+      {
+        await session.DisconnectAsync().ConfigureAwait(false);
+      }
+
+      var clientTasks = _clientTasks.Values.ToArray();
+      if (clientTasks.Length > 0)
+      {
+        await Task.WhenAll(clientTasks).WaitAsync(cancellationToken).ConfigureAwait(false);
+      }
+      _sessions.Clear();
+      _clientTasks.Clear();
+      lock (_statsLock) _startedAt = null;
+      _logger?.LogInformation("TCP Server '{Name}' stopped", Name);
     }
-
-    cancellationToken.ThrowIfCancellationRequested();
-
-    // 外部CancellationTokenの登録を破棄
-    _externalCancellationTokenRegistration?.Dispose();
-    _externalCancellationTokenRegistration = null;
-
-    _cancellationTokenSource.Cancel();
-    _isRunning = false;
-    _listener?.Stop();
-    _listener = null;
-
-    // 全セッションを切断
-    var sessions = _sessions.Values.ToList();
-    foreach (var session in sessions)
+    finally
     {
-      await session.DisconnectAsync().ConfigureAwait(false);
+      _lifecycleLock.Release();
     }
-    _sessions.Clear();
-
-    // 起動時刻をクリア（統計情報は保持）
-    lock (_statsLock)
-    {
-      _startedAt = null;
-    }
-
-    _logger?.LogInformation("TCP Server '{Name}' stopped", Name);
   }
 
-  private async Task AcceptClientsAsync()
+  private async Task AcceptClientsAsync(TcpListener listener, CancellationToken cancellationToken)
   {
-    while (!_cancellationTokenSource.Token.IsCancellationRequested && _listener != null)
+    while (!cancellationToken.IsCancellationRequested)
     {
       try
       {
-        // AcceptTcpClientAsyncをキャンセル可能にする
-        var tcpClient = await _listener.AcceptTcpClientAsync(_cancellationTokenSource.Token);
-        _ = Task.Run(() => HandleClientAsync(tcpClient), _cancellationTokenSource.Token);
+        var tcpClient = await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
+        var taskId = Interlocked.Increment(ref _nextClientTaskId);
+        var task = ObserveClientAsync(taskId, tcpClient);
+        _clientTasks[taskId] = task;
       }
       catch (OperationCanceledException)
       {
@@ -188,12 +201,32 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       }
       catch (Exception ex)
       {
-        if (!_cancellationTokenSource.Token.IsCancellationRequested)
+        if (!cancellationToken.IsCancellationRequested)
         {
           _logger?.LogError(ex, "Error accepting client");
-          OnError?.Invoke(this, (ex, null));
+          SafeEventDispatcher.Invoke(OnError, this, (ex, (SessionInfo?)null),
+              handlerEx => _logger?.LogError(handlerEx, "OnError handler threw an exception in server {Name}", Name));
         }
       }
+    }
+  }
+
+  private async Task ObserveClientAsync(long taskId, System.Net.Sockets.TcpClient tcpClient)
+  {
+    // 呼び出し側がdictionaryへ登録する機会を保証する。
+    await Task.Yield();
+    try
+    {
+      await HandleClientAsync(tcpClient).ConfigureAwait(false);
+    }
+    catch (Exception ex)
+    {
+      _logger?.LogError(ex, "Unhandled TCP client session error in server {Name}", Name);
+      tcpClient.Dispose();
+    }
+    finally
+    {
+      _clientTasks.TryRemove(taskId, out _);
     }
   }
 
@@ -221,12 +254,15 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         _logger,
         _filters);
 
-    session.OnMessageReceived += (msg) =>
+    session.MessageReceivedAsync = async (msg, cancellationToken) =>
     {
       // メッセージ受信統計を更新
       Interlocked.Increment(ref _messagesReceived);
-      OnMessageReceived?.Invoke(this, (msg, sessionInfo));
-      _messageReceivedSubject.OnNext((msg, sessionInfo));
+      SafeEventDispatcher.Invoke(OnMessageReceived, this, (msg, sessionInfo),
+          ex => _logger?.LogError(ex, "OnMessageReceived handler threw an exception in server {Name}", Name));
+      _messageReceivedSubject.Publish((msg, sessionInfo),
+          ex => _logger?.LogError(ex, "MessageReceived observer threw an exception in server {Name}", Name));
+      await RaiseMessageReceivedAsync(msg, sessionInfo, cancellationToken).ConfigureAwait(false);
     };
 
     session.OnDisconnected += () =>
@@ -236,14 +272,16 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       {
         _lastClientDisconnectedAt = DateTime.UtcNow;
       }
-      OnClientDisconnected?.Invoke(this, sessionInfo);
+      SafeEventDispatcher.Invoke(OnClientDisconnected, this, sessionInfo,
+          ex => _logger?.LogError(ex, "OnClientDisconnected handler threw an exception in server {Name}", Name));
       // セッションが保持するリソース（CTS・セマフォ）を解放
       session.Dispose();
     };
 
     session.OnError += (ex) =>
     {
-      OnError?.Invoke(this, (ex, sessionInfo));
+      SafeEventDispatcher.Invoke(OnError, this, (ex, (SessionInfo?)sessionInfo),
+          handlerEx => _logger?.LogError(handlerEx, "OnError handler threw an exception in server {Name}", Name));
     };
 
     _sessions.TryAdd(sessionId, session);
@@ -258,9 +296,31 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     _logger?.LogInformation("TCP Server '{Name}' client connected: session {SessionId} from {RemoteEndPoint}",
         Name, sessionId, remoteEndPoint);
 
-    OnClientConnected?.Invoke(this, sessionInfo);
+    SafeEventDispatcher.Invoke(OnClientConnected, this, sessionInfo,
+        ex => _logger?.LogError(ex, "OnClientConnected handler threw an exception in server {Name}", Name));
 
-    await session.StartAsync().ConfigureAwait(false);
+    await session.RunAsync().ConfigureAwait(false);
+  }
+
+  private async Task RaiseMessageReceivedAsync(Message message, SessionInfo sessionInfo, CancellationToken cancellationToken)
+  {
+    var handler = OnMessageReceivedAsync;
+    if (handler == null) return;
+    foreach (TcpServerMessageHandler subscriber in handler.GetInvocationList())
+    {
+      try
+      {
+        await subscriber(message, sessionInfo, cancellationToken).ConfigureAwait(false);
+      }
+      catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+      {
+        throw;
+      }
+      catch (Exception ex)
+      {
+        _logger?.LogError(ex, "OnMessageReceivedAsync handler threw an exception in server {Name}", Name);
+      }
+    }
   }
 
   private string GenerateSessionId(IPEndPoint endPoint)
@@ -399,6 +459,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
+    _lifecycleLock.Dispose();
     _disposed = true;
   }
 
@@ -416,6 +477,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
+    _lifecycleLock.Dispose();
     _disposed = true;
   }
 
@@ -442,7 +504,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
 
     public SessionInfo SessionInfo => _sessionInfo;
 
-    public event Action<Message>? OnMessageReceived;
+    public Func<Message, CancellationToken, Task>? MessageReceivedAsync { get; set; }
     public event Action? OnDisconnected;
     public event Action<Exception>? OnError;
 
@@ -477,10 +539,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       _stream = _tcpClient.GetStream();
     }
 
-    public async Task StartAsync()
-    {
-      _ = Task.Run(ReceiveLoopAsync, _cancellationTokenSource.Token);
-    }
+    public Task RunAsync() => ReceiveLoopAsync();
 
     private async Task ReceiveLoopAsync()
     {
@@ -516,7 +575,10 @@ public class TcpServer : ITcpServer, IAsyncDisposable
             // メッセージログ出力（EnableMessageLogging有効時はInformationレベル）
             _logger?.Log(MessageLogLevel, "TCP Server '{Name}' received message from session {SessionId}: {MessageText}", _config.Name, _sessionId, filteredMessage.Text?.Trim());
 
-            OnMessageReceived?.Invoke(filteredMessage);
+            if (MessageReceivedAsync != null)
+            {
+              await MessageReceivedAsync(filteredMessage, _cancellationTokenSource.Token).ConfigureAwait(false);
+            }
           }
         }
         catch (OperationCanceledException)
@@ -526,14 +588,16 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         catch (Exception ex)
         {
           _logger?.LogError(ex, "Error receiving data in session {SessionId}", _sessionId);
-          OnError?.Invoke(ex);
+          SafeEventDispatcher.Invoke(OnError, ex,
+              handlerEx => _logger?.LogError(handlerEx, "Session error handler threw for {SessionId}", _sessionId));
           break;
         }
       }
 
       // NW障害による切断として扱う
       await DisconnectAsync(isIntentional: false);
-      OnDisconnected?.Invoke();
+      SafeEventDispatcher.Invoke(OnDisconnected,
+          ex => _logger?.LogError(ex, "Session disconnect handler threw for {SessionId}", _sessionId));
     }
 
     public async Task SendAsync(Message message, CancellationToken cancellationToken = default)
@@ -596,6 +660,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         _stream = null;
       }
       _tcpClient?.Dispose();
+      _sessionInfo.IsActive = false;
 
       if (isIntentional)
       {

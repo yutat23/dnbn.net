@@ -27,6 +27,7 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
       {
         "Name": "TerminatorServer",
         "ListenPort": 5000,
+        "BindAddress": "127.0.0.1",
         "Encoding": "UTF-8",
         "MessageTerminator": "\r\n",
         "ReceiveMessageTerminator": [ "\r\n", "\n" ],
@@ -43,8 +44,9 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
       {
         "Name": "LengthFieldServer",
         "ListenPort": 5001,
+        "BindAddress": "0.0.0.0",
         "Encoding": "Shift-JIS",
-        "ClientIdentification": "HeaderBased",
+        "ClientIdentification": "SourceEndpoint",
         "FixedHeaderLength": 8,
         "LengthFieldOffset": 4,
         "LengthFieldLength": 4,
@@ -62,6 +64,8 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
         "ReceiveMessageTerminator": [ "\r\n", "\n" ],
         "TimeoutMilliseconds": 5000,
         "SendQueueCapacity": 1000,
+        "MaxConcurrentResponseWaits": 1,
+        "IncompleteRequestRecovery": "Reconnect",
         "WaitForConnectionOnSend": true,
         "WaitForConnectionTimeoutMilliseconds": 10000,
         "EnableMessageLogging": true,
@@ -130,16 +134,17 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
 |---|---:|---:|---|
 | `Name` | `string` | `""` | サーバー名 |
 | `ListenPort` | `int` | `0` | 待ち受けポート |
+| `BindAddress` | `string` | `"0.0.0.0"` | 待ち受けIPアドレス |
 | `Encoding` | `string` | `"UTF-8"` | 文字エンコーディング |
 | `MessageTerminator` | `string?` | `null` | 送信時、および受信時の既定終端文字 |
 | `ReceiveMessageTerminator` | `string[]?` | `null` | 受信時の終端文字候補 |
-| `ClientIdentification` | `ClientIdentification` | `SourceEndpoint` | クライアント識別方式 |
+| `ClientIdentification` | `ClientIdentification` | `SourceEndpoint` | クライアント識別方式。v1.5では`SourceEndpoint`のみ対応し、`HeaderBased`は起動時エラー |
 | `FixedHeaderLength` | `int?` | `null` | 固定長/長さフィールド方式のヘッダ長 |
 | `FixedBodyLength` | `int?` | `null` | 固定長方式のボディ長 |
 | `LengthFieldOffset` | `int?` | `null` | ヘッダ内の長さフィールド開始位置 |
 | `LengthFieldLength` | `int?` | `null` | 長さフィールドのバイト数 |
 | `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ（`true`: Information、`false`: Debug レベルで出力） |
-| `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。未設定または0以下は無制限 |
+| `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。指定時は1以上 |
 | `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCPレベルのキープアライブ設定（接続を受け付けたクライアントソケットに適用） |
 
 ## ClientConfig
@@ -158,6 +163,8 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
 | `ConnectionRetryPolicy` | `RetryPolicy?` | `null` | 接続失敗/切断時の再接続リトライ |
 | `TimeoutMilliseconds` | `int` | `5000` | `SendAsync` の既定タイムアウト |
 | `SendQueueCapacity` | `int` | `1000` | 送信キューの最大サイズ。満杯時は送信呼び出しが空き待ちになる |
+| `MaxConcurrentResponseWaits` | `int?` | `null` | 同時に応答待ちにできる要求数。`SendOneWayAsync`は対象外。nullは従来どおり無制限 |
+| `IncompleteRequestRecovery` | `IncompleteRequestRecovery` | `KeepConnection` | wire書き込み開始後のtimeout/cancel時の回復方法。`Reconnect`を推奨 |
 | `WaitForConnectionOnSend` | `bool` | `false` | 未接続時の送信で接続確立を待つ。既定値では従来どおり即座に `InvalidOperationException` |
 | `WaitForConnectionTimeoutMilliseconds` | `int` | `10000` | 接続待ち送信の最大待機時間。タイムアウト時は `TimeoutException` |
 | `KeepAlive` | `KeepAliveConfig?` | `null` | KeepAlive設定（アプリケーションレベル：電文送信による死活監視） |
@@ -167,9 +174,11 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
 | `LengthFieldOffset` | `int?` | `null` | ヘッダ内の長さフィールド開始位置 |
 | `LengthFieldLength` | `int?` | `null` | 長さフィールドのバイト数 |
 | `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ（`true`: Information、`false`: Debug レベルで出力） |
-| `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。未設定または0以下は無制限 |
+| `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。指定時は1以上 |
 
 `NotificationPredicate` はコードから設定するプロパティです。JSON/XML設定には含められません。
+
+`SendAsync` / `SendAndWaitAsync` は応答必須、`SendOneWayAsync` は応答なしの契約です。FIFO以外の相関IDを持たないプロトコルでは、同時応答待ちを1件に制限し、送信済み要求が未完了になった接続を再確立することで遅延応答の誤相関を防ぎます。`Reconnect`時の接続待ち送信には`WaitForConnectionOnSend`も有効にしてください。
 
 ## RetryPolicy
 
@@ -181,6 +190,8 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
 | `MaxDelayMs` | `int` | `60000` | 最大待機時間 |
 | `FailOnTimeout` | `bool` | `true` | タイムアウトを失敗として扱う |
 | `FailOnErrorResponse` | `bool` | `true` | エラー応答を失敗として扱う |
+
+`RetryPolicy`を設定すると要求電文が再送されます。二重実行できないコマンドには設定しないでください。接続確立の再試行だけが必要な場合は`ConnectionRetryPolicy`を使用します。
 
 ## KeepAliveConfig
 

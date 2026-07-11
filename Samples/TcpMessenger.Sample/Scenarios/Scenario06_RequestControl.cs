@@ -36,12 +36,12 @@ internal static class Scenario06_RequestControl
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
     var flakyAttempts = new ConcurrentDictionary<string, int>();
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
-        var command = e.message.Text?.Trim() ?? "";
-        var sessionId = e.sessionInfo.SessionId;
+        var command = message.Text?.Trim() ?? "";
+        var sessionId = sessionInfo.SessionId;
 
         switch (command)
         {

@@ -1,6 +1,18 @@
 namespace Dnbn.Configuration;
 
 /// <summary>
+/// 送信済みの要求が応答を得られず、FIFO応答相関を信頼できなくなった場合の回復方法。
+/// </summary>
+public enum IncompleteRequestRecovery
+{
+  /// <summary>接続を維持する（後方互換。遅延応答が後続要求へ誤相関する可能性がある）。</summary>
+  KeepConnection,
+
+  /// <summary>接続を切断し、接続リトライ設定に従って再接続する。</summary>
+  Reconnect
+}
+
+/// <summary>
 /// クライアント設定
 /// </summary>
 public class ClientConfig
@@ -105,6 +117,17 @@ public class ClientConfig
   public int SendQueueCapacity { get; set; } = 1000;
 
   /// <summary>
+  /// 同時に応答待ち状態にできる要求数。
+  /// null は従来どおり無制限。SendOneWayAsync はこの制限に含まれない。
+  /// </summary>
+  public int? MaxConcurrentResponseWaits { get; set; }
+
+  /// <summary>
+  /// wire書き込み開始後に要求がタイムアウトまたはキャンセルされた場合の回復方法。
+  /// </summary>
+  public IncompleteRequestRecovery IncompleteRequestRecovery { get; set; } = IncompleteRequestRecovery.KeepConnection;
+
+  /// <summary>
   /// 未接続時の送信で接続確立を待つかどうか。
   /// true の場合、SendAsync / SendOneWayAsync は未接続時に例外を投げる代わりに、
   /// 再接続のバックオフ待機を中断（InterruptReconnectDelay）した上で
@@ -124,6 +147,36 @@ public class ClientConfig
   /// 任意で上限を設定することでメモリ枯渇を防げる。
   /// </summary>
   public int? MaxReceiveBufferBytes { get; set; }
-}
 
+  /// <summary>この設定の複製を作成する。</summary>
+  public ClientConfig Clone()
+  {
+    return new ClientConfig
+    {
+      Name = Name,
+      RemoteHost = RemoteHost,
+      RemotePort = RemotePort,
+      Encoding = Encoding,
+      MessageTerminator = MessageTerminator,
+      ReceiveMessageTerminator = ReceiveMessageTerminator?.ToArray(),
+      RetryPolicy = RetryPolicy?.Clone(),
+      ConnectionRetryPolicy = ConnectionRetryPolicy?.Clone(),
+      TimeoutMilliseconds = TimeoutMilliseconds,
+      KeepAlive = KeepAlive?.Clone(),
+      TcpKeepAlive = TcpKeepAlive?.Clone(),
+      NotificationPredicate = NotificationPredicate,
+      FixedHeaderLength = FixedHeaderLength,
+      FixedBodyLength = FixedBodyLength,
+      LengthFieldOffset = LengthFieldOffset,
+      LengthFieldLength = LengthFieldLength,
+      EnableMessageLogging = EnableMessageLogging,
+      SendQueueCapacity = SendQueueCapacity,
+      MaxConcurrentResponseWaits = MaxConcurrentResponseWaits,
+      IncompleteRequestRecovery = IncompleteRequestRecovery,
+      WaitForConnectionOnSend = WaitForConnectionOnSend,
+      WaitForConnectionTimeoutMilliseconds = WaitForConnectionTimeoutMilliseconds,
+      MaxReceiveBufferBytes = MaxReceiveBufferBytes
+    };
+  }
+}
 

@@ -34,10 +34,8 @@ public class TcpClientDiagnosticsTests
 
     await client.ConnectAsync();
 
-    var request = client.SendAsync("PING");
-    await TestWait.UntilSentAsync(transport, "PING");
-    transport.EnqueueReceiveData("PONG");
-    Assert.Equal("PONG", (await request).Text?.Trim());
+    transport.RespondOnNextSend("PONG");
+    Assert.Equal("PONG", (await client.SendAsync("PING")).Text?.Trim());
 
     await client.SendOneWayAsync("NOTICE");
 
@@ -125,12 +123,12 @@ public class TcpClientDiagnosticsTests
   }
 
   [Fact]
-  public async Task SendAsync_WhenConnectionWaitTimeoutIsInvalid_ThrowsConfigurationError()
+  public void Constructor_WhenConnectionWaitTimeoutIsInvalid_ThrowsConfigurationError()
   {
     var transport = new MockTransport();
-    await using var client = new TcpClient(CreateConfig(waitForConnection: true, waitTimeoutMs: 0), transport);
 
-    var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendAsync("PING"));
+    var ex = Assert.Throws<InvalidOperationException>(() =>
+      new TcpClient(CreateConfig(waitForConnection: true, waitTimeoutMs: 0), transport));
     Assert.Contains(nameof(ClientConfig.WaitForConnectionTimeoutMilliseconds), ex.Message);
   }
 }

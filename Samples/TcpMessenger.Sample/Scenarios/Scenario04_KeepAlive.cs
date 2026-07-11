@@ -34,22 +34,22 @@ internal static class Scenario04_KeepAlive
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
     _respondToPing = true;
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
-        var text = e.message.Text?.Trim();
+        var text = message.Text?.Trim();
         if (text == "PING")
         {
           if (_respondToPing)
           {
-            await server.SendAsync(e.sessionInfo.SessionId, "PONG");
+            await server.SendAsync(sessionInfo.SessionId, "PONG");
           }
           // 無応答モードのときは PING を無視する（機器ハング状態のシミュレート）
         }
         else
         {
-          await server.SendAsync(e.sessionInfo.SessionId, $"STATUS:OK ({text})");
+          await server.SendAsync(sessionInfo.SessionId, $"STATUS:OK ({text})");
         }
       }
       catch (Exception ex)

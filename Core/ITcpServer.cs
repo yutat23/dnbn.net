@@ -1,8 +1,13 @@
 using System;
-using System.Reactive;
 using Dnbn.Models;
 
 namespace Dnbn.Core;
+
+/// <summary>TCPサーバーが受信したメッセージを非同期に処理するハンドラ。</summary>
+public delegate Task TcpServerMessageHandler(
+    Message message,
+    SessionInfo sessionInfo,
+    CancellationToken cancellationToken);
 
 /// <summary>
 /// TCPサーバーインターフェイス
@@ -23,6 +28,16 @@ public interface ITcpServer : IDisposable
   /// メッセージ受信イベント
   /// </summary>
   event EventHandler<(Message message, SessionInfo sessionInfo)>? OnMessageReceived;
+
+  /// <summary>
+  /// セッションごとの受信順序を保ってawaitされる非同期メッセージハンドラ。
+  /// 既存の独自ITcpServer実装とのソース互換性のため、既定実装は何もしない。
+  /// </summary>
+  event TcpServerMessageHandler? OnMessageReceivedAsync
+  {
+    add { }
+    remove { }
+  }
 
   /// <summary>
   /// クライアント接続イベント
@@ -106,6 +121,3 @@ public interface ITcpServer : IDisposable
   /// </summary>
   ServerConnectionInfo ConnectionInfo { get; }
 }
-
-
-

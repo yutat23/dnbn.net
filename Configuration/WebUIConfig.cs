@@ -63,4 +63,23 @@ public class WebUIConfig
   /// 設定した場合、送信リクエストは X-Dnbn-Send-Token ヘッダーに同じ値を要求する
   /// </summary>
   public string? SendAuthToken { get; set; }
+
+  /// <summary>この設定の複製を作成する。</summary>
+  public WebUIConfig Clone()
+  {
+    return new WebUIConfig
+    {
+      Enabled = Enabled,
+      Port = Port,
+      UpdateIntervalSeconds = UpdateIntervalSeconds,
+      BindAddress = BindAddress,
+      EnableLogging = EnableLogging,
+      EventTimelineCapacity = EventTimelineCapacity,
+      EnableMessageHistory = EnableMessageHistory,
+      MessageHistoryCapacity = MessageHistoryCapacity,
+      MessageHistoryMaxPayloadBytes = MessageHistoryMaxPayloadBytes,
+      AllowSendFromUI = AllowSendFromUI,
+      SendAuthToken = SendAuthToken
+    };
+  }
 }

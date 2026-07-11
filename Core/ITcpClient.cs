@@ -1,5 +1,4 @@
 using System;
-using System.Reactive;
 using Dnbn.Configuration;
 using Dnbn.Models;
 
@@ -89,7 +88,8 @@ public interface ITcpClient : IDisposable
 
   /// <summary>
   /// メッセージをキューに追加して送信し、応答を待つ（HTTPクライアントのように）
-  /// 応答が来るまで次のメッセージは送信されない
+  /// MaxConcurrentResponseWaitsが未設定の場合、複数要求を送信して応答をFIFOで待機できる。
+  /// 1の場合は先行要求の完了まで次の応答必須要求を送信しない。
   /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="message">送信するメッセージ</param>
@@ -113,7 +113,8 @@ public interface ITcpClient : IDisposable
 
   /// <summary>
   /// 文字列を送信して応答を待つ（設定のEncodingを使用）
-  /// 応答が来るまで次のメッセージは送信されない
+  /// MaxConcurrentResponseWaitsが未設定の場合、複数要求を送信して応答をFIFOで待機できる。
+  /// 1の場合は先行要求の完了まで次の応答必須要求を送信しない。
   /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="text">送信する文字列</param>
@@ -205,4 +206,3 @@ public interface ITcpClient : IDisposable
   /// <exception cref="TimeoutException">タイムアウト時間内に接続が確立されなかった場合</exception>
   Task WaitForConnectionAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
 }
-

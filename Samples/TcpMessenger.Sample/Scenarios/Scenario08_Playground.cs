@@ -42,11 +42,11 @@ internal static class Scenario08_Playground
     SampleConsole.Step("エコーサーバーとクライアントを起動します");
 
     var server = factory.CreateServer("PlaygroundServer");
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
-        await server.SendAsync(e.sessionInfo.SessionId, $"ECHO: {e.message.Text?.Trim()}");
+        await server.SendAsync(sessionInfo.SessionId, $"ECHO: {message.Text?.Trim()}");
       }
       catch (Exception ex)
       {

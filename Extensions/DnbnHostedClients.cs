@@ -23,9 +23,16 @@ public interface IDnbnClientCollection
 }
 
 /// <summary>
+/// ライブラリが所有し、Hostライフサイクルと連動する名前付きクライアントのregistry。
+/// </summary>
+public interface IDnbnClientRegistry : IDnbnClientCollection
+{
+}
+
+/// <summary>
 /// IDnbnClientCollection の実装（keyed service 経由でクライアントを解決する）
 /// </summary>
-internal sealed class DnbnClientCollection : IDnbnClientCollection
+internal sealed class DnbnClientCollection : IDnbnClientRegistry
 {
   private readonly IServiceProvider _serviceProvider;
 

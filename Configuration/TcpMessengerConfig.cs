@@ -19,7 +19,16 @@ public class TcpMessengerConfig
   /// Web UI設定
   /// </summary>
   public WebUIConfig? WebUI { get; set; }
+
+  /// <summary>この設定の複製を作成する。</summary>
+  public TcpMessengerConfig Clone()
+  {
+    return new TcpMessengerConfig
+    {
+      Servers = Servers.Select(server => server.Clone()).ToList(),
+      Clients = Clients.Select(client => client.Clone()).ToList(),
+      WebUI = WebUI?.Clone()
+    };
+  }
 }
-
-
 

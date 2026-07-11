@@ -31,13 +31,18 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Restore dependencies
         run: dotnet restore
 
       - name: Build
         run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test Tests/Dnbn.Tests/Dnbn.Tests.csproj --configuration Release --no-build --no-restore
 
       - name: Pack
         run: |
@@ -49,4 +54,3 @@ jobs:
 
       - name: Publish to NuGet.org
         run: dotnet nuget push ./artifacts/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
-

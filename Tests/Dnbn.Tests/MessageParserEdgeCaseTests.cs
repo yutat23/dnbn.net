@@ -9,6 +9,18 @@ namespace Dnbn.Tests;
 /// </summary>
 public class MessageParserEdgeCaseTests
 {
+  [Fact]
+  public void Parse_OverlappingTerminators_PrefersLongestMatchAtSamePosition()
+  {
+    var parser = new MessageParser(Encoding.UTF8, ["\r", "\r\n", "\n"]);
+
+    var messages = parser.Parse(Encoding.UTF8.GetBytes("OK\r\nNEXT\r"));
+
+    Assert.Equal(2, messages.Count);
+    Assert.Equal("OK\r\n", messages[0].Text);
+    Assert.Equal("NEXT\r", messages[1].Text);
+  }
+
   private static readonly Encoding Utf8 = Encoding.UTF8;
 
   // ---------------------------------------------------------------------------

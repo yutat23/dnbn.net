@@ -11,8 +11,9 @@
     <Authors>dnbn.net</Authors>
     <Description>Web UI拡張機能 for dnbn.net - TCP Messengerの状態をWebブラウザで表示</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>1.4.0</Version>
+    <Version>$(DnbnPackageVersion)</Version>
     <PackageId>dnbn.net.WebUI</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
     <NoWarn>$(NoWarn);NU1510</NoWarn>
   </PropertyGroup>
@@ -31,6 +32,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="wwwroot\**\*" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
 </Project>

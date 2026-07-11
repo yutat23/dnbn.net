@@ -8,7 +8,7 @@ namespace Dnbn.Core;
 /// <summary>
 /// TCP Messengerファクトリー実装
 /// </summary>
-public class TcpMessengerFactory : ITcpMessengerFactory
+public class TcpMessengerFactory : ITypedTcpMessengerFactory
 {
   private readonly TcpMessengerConfig _config;
   private readonly ILoggerFactory? _loggerFactory;
@@ -25,7 +25,8 @@ public class TcpMessengerFactory : ITcpMessengerFactory
       ILoggerFactory? loggerFactory = null,
       IEnumerable<IMessageFilter>? filters = null)
   {
-    _config = config.Value;
+    TcpMessengerConfigValidator.Validate(config.Value);
+    _config = config.Value.Clone();
     _loggerFactory = loggerFactory;
     _filters = filters ?? Enumerable.Empty<IMessageFilter>();
   }
@@ -40,8 +41,16 @@ public class TcpMessengerFactory : ITcpMessengerFactory
     var serverConfig = _config.Servers.FirstOrDefault(s => s.Name == name)
         ?? throw new ArgumentException($"Server configuration '{name}' not found", nameof(name));
 
+    return CreateServer(serverConfig);
+  }
+
+  /// <inheritdoc />
+  public ITcpServer CreateServer(ServerConfig config)
+  {
+    ArgumentNullException.ThrowIfNull(config);
+    TcpMessengerConfigValidator.ValidateServer(config);
     var logger = _loggerFactory?.CreateLogger<TcpServer>();
-    return new TcpServer(serverConfig, logger, _filters);
+    return new TcpServer(config.Clone(), logger, _filters);
   }
 
   /// <summary>
@@ -54,11 +63,17 @@ public class TcpMessengerFactory : ITcpMessengerFactory
     var clientConfig = _config.Clients.FirstOrDefault(c => c.Name == name)
         ?? throw new ArgumentException($"Client configuration '{name}' not found", nameof(name));
 
+    return CreateClient(clientConfig);
+  }
+
+  /// <inheritdoc />
+  public ITcpClient CreateClient(ClientConfig config)
+  {
+    ArgumentNullException.ThrowIfNull(config);
+    TcpMessengerConfigValidator.ValidateClient(config);
+    var clientConfig = config.Clone();
     var transport = new TcpTransport(clientConfig.RemoteHost, clientConfig.RemotePort, clientConfig.TcpKeepAlive);
     var logger = _loggerFactory?.CreateLogger<TcpClient>();
     return new TcpClient(clientConfig, transport, logger, _filters);
   }
 }
-
-
-

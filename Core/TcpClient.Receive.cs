@@ -81,7 +81,12 @@ partial class TcpClient
                 else if (req.ResponseTcs != null && !req.IsKeepAlive && now - req.EnqueuedAt >= req.Timeout)
                 {
                   _pendingResponseRequests.Remove(node);
-                  req.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds"));
+                  if (req.ResponseTcs.TrySetException(new TimeoutException($"Request timed out after {req.Timeout.TotalSeconds} seconds")))
+                  {
+                    // タイマーコールバックより先に受信ループが期限切れを検出した場合も、
+                    // 同じ受信電文を後続要求へ誤相関させない。
+                    SuspendResponseMatchingIfRecoveryRequired(req);
+                  }
                 }
                 node = next;
               }
@@ -99,26 +104,48 @@ partial class TcpClient
                   var next = node.Next;
                   var req = node.Value;
                   if (req.ResponseTcs != null &&
+                      Volatile.Read(ref req.WireWriteStarted) != 0 &&
                       (req.ResponsePredicate == null || req.ResponsePredicate(filteredMessage)))
                   {
                     _pendingResponseRequests.Remove(node);
-                    if (req.ResponseTcs.TrySetResult(filteredMessage))
-                    {
-                      matchedRequest = req;
-                      handled = true;
-                      break;
-                    }
-                    // 完了で負けた（並行タイムアウト等）場合は次の待機リクエストを探す
+                    matchedRequest = req;
+                    // 送信完了処理と並行して応答が届いた場合は、この電文を対象要求へ予約する。
+                    // 後続要求や通知として誤配しないため、TCS完了の勝敗はロック外で確認する。
+                    handled = true;
+                    break;
                   }
                   node = next;
                 }
               }
             }
 
-            // イベント配送はTrySetResultに成功したリクエストに対してのみ行う
+            // 応答は実送信トレースより先に到着し得る。送信完了通知を待ってから
+            // 応答TCSと受信トレースを完了し、診断イベントの因果順序を維持する。
             if (matchedRequest != null)
             {
-              if (matchedRequest.IsKeepAlive)
+              var sendCompleted = true;
+              if (matchedRequest.SendCompletedTcs != null)
+              {
+                try
+                {
+                  await matchedRequest.SendCompletedTcs.Task.ConfigureAwait(false);
+                }
+                catch
+                {
+                  sendCompleted = false;
+                }
+              }
+
+              var responseAccepted = false;
+              if (sendCompleted)
+              {
+                lock (_pendingResponseRequestsLock)
+                {
+                  responseAccepted = matchedRequest.ResponseTcs?.TrySetResult(filteredMessage) == true;
+                }
+              }
+
+              if (responseAccepted && matchedRequest.IsKeepAlive)
               {
                 // KeepAlive応答（KeepAliveは通常要求と同じFIFOキューで応答と相関させる）
                 lock (_statsLock)
@@ -128,7 +155,7 @@ partial class TcpClient
                 RaiseMessageTrace(MessageTraceDirection.Received, MessageTraceKind.KeepAliveResponse, filteredMessage);
                 RaiseKeepAliveResponseReceived(filteredMessage);
               }
-              else
+              else if (responseAccepted)
               {
                 RaiseMessageTrace(
                     MessageTraceDirection.Received,
@@ -142,8 +169,10 @@ partial class TcpClient
           if (!handled)
           {
             RaiseMessageTrace(MessageTraceDirection.Received, MessageTraceKind.Notification, filteredMessage);
-            OnMessageReceived?.Invoke(this, filteredMessage);
-            _messageReceivedSubject.OnNext(filteredMessage);
+            SafeEventDispatcher.Invoke(OnMessageReceived, this, filteredMessage,
+                ex => _logger?.LogError(ex, "OnMessageReceived handler threw an exception in client {Name}", Name));
+            _messageReceivedSubject.Publish(filteredMessage,
+                ex => _logger?.LogError(ex, "MessageReceived observer threw an exception in client {Name}", Name));
           }
         }
       }
@@ -166,7 +195,8 @@ partial class TcpClient
             _stats.LastErrorAt = DateTime.UtcNow;
           }
           _logger?.LogError(ex, "Error receiving data in client {Name}", Name);
-          OnError?.Invoke(this, ex);
+          SafeEventDispatcher.Invoke(OnError, this, ex,
+              handlerEx => _logger?.LogError(handlerEx, "OnError handler threw an exception in client {Name}", Name));
           // NW障害として扱う
           wasNetworkError = !_isIntentionalDisconnect;
         }

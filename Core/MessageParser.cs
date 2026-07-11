@@ -120,7 +120,12 @@ public class MessageParser
       {
         var terminatorIndex = FindSequence(_buffer, terminatorBytes);
 
-        if (terminatorIndex >= 0 && terminatorIndex < earliestIndex)
+        // 同じ位置で複数候補が一致する場合は最長一致を優先する。
+        // 例: "\r" と "\r\n" が設定され、入力がCRLFなら一電文として扱う。
+        if (terminatorIndex >= 0 &&
+            (terminatorIndex < earliestIndex ||
+             (terminatorIndex == earliestIndex &&
+              (matchedTerminatorBytes == null || terminatorBytes.Length > matchedTerminatorBytes.Length))))
         {
           earliestIndex = terminatorIndex;
           matchedTerminatorBytes = terminatorBytes;
@@ -281,4 +286,3 @@ public class MessageParser
     _buffer.Clear();
   }
 }
-

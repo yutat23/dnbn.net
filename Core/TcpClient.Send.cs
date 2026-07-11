@@ -60,6 +60,9 @@ partial class TcpClient
 
           // MessageTerminatorを自動的に追加
           var dataToSend = TcpMessageUtils.AppendMessageTerminatorIfNeeded(filteredMessage, _config.MessageTerminator, _config.Encoding);
+          // これ以降のtimeout/cancel/send failureは、部分書き込みを含め応答相関を
+          // 信頼できない可能性があるため接続回復の対象になる。
+          Volatile.Write(ref request.WireWriteStarted, 1);
           await _transport.SendAsync(dataToSend, request.CancellationToken);
 
           // 統計情報を更新

@@ -24,6 +24,8 @@ TCP の独自電文を .NET から扱うためのメッセージ送受信ライ�
 - `ConnectionState` と `OnConnectionStateChanged` による接続状態遷移の観測（自動再接続中の検知）
 - `OnMessageTrace` による要求・応答・通知・KeepAliveを含む送受信診断
 - Generic Host連動の名前付きクライアント登録・自動接続/切断
+- 応答待ち要求数の制限と、timeout/cancel後の安全な接続回復
+- セッション内の受信順序を保つawait可能なサーバーハンドラ
 - オプションの Web UI パッケージ
 
 ## インストール
@@ -47,6 +49,7 @@ dotnet add package dnbn.net.WebUI
 - [Web UI](./docs/web-ui.md)
 - [ログ](./docs/logging.md)
 - [トラブルシューティング](./docs/troubleshooting.md)
+- [変更履歴](./CHANGELOG.md)
 
 ## クイックスタート
 
@@ -67,9 +70,12 @@ await using var server = new TcpServer(new ServerConfig
     MessageTerminator = "\n",
 });
 
-server.OnMessageReceived += async (_, e) =>
+server.OnMessageReceivedAsync += async (message, sessionInfo, cancellationToken) =>
 {
-    await server.SendAsync(e.sessionInfo.SessionId, $"ECHO: {e.message.Text?.Trim()}");
+    await server.SendAsync(
+        sessionInfo.SessionId,
+        $"ECHO: {message.Text?.Trim()}",
+        cancellationToken);
 };
 
 await server.StartAsync();
@@ -82,6 +88,9 @@ var clientConfig = new ClientConfig
     Encoding = "UTF-8",
     MessageTerminator = "\n",
     TimeoutMilliseconds = 5000,
+    MaxConcurrentResponseWaits = 1,
+    IncompleteRequestRecovery = IncompleteRequestRecovery.Reconnect,
+    WaitForConnectionOnSend = true,
 };
 
 await using var client = new TcpClient(
@@ -120,6 +129,9 @@ await server.StopAsync();
         "Encoding": "UTF-8",
         "MessageTerminator": "\n",
         "TimeoutMilliseconds": 5000,
+        "MaxConcurrentResponseWaits": 1,
+        "IncompleteRequestRecovery": "Reconnect",
+        "WaitForConnectionOnSend": true,
         "ConnectionRetryPolicy": {
           "MaxRetryCount": -1,
           "RetryDelayStrategy": "Exponential",
@@ -201,7 +213,7 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
 }
 ```
 
-終端文字や長さフィールドを使わない構成では受信バッファが伸び続ける可能性があります。必要に応じて `MaxReceiveBufferBytes` を設定してください。
+終端文字または長さフィールドのどちらかは必須です。不完全・矛盾した設定はendpoint生成時に例外になります。
 
 ## よく使う設定
 
@@ -256,6 +268,8 @@ KeepAlive 応答は `OnKeepAliveResponseReceived` で受け取れます。`Disco
 | `OnKeepAliveResponseReceived` | KeepAlive メッセージへの応答 |
 
 `SendAsync` が受け取った応答は、通常 `OnMessageReceived` には流れません。通知電文を明示的に分けたい場合は `NotificationPredicate` を設定できます。
+
+応答しないコマンドは `SendAsync` ではなく `SendOneWayAsync` で送信してください。`SendAsync` は応答必須の契約です。FIFOで応答を識別するプロトコルでは、`MaxConcurrentResponseWaits: 1` と `IncompleteRequestRecovery: Reconnect` の組み合わせを推奨します。
 
 ## Web UI
 

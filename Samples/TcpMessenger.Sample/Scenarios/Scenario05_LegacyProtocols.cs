@@ -48,18 +48,18 @@ internal static class Scenario05_LegacyProtocols
     };
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
-        var command = e.message.Text?.Trim();
+        var command = message.Text?.Trim();
         var reply = command switch
         {
           "*IDN?" => "計測器シミュレータ 型式SJ-100 Ver1.0",
           "MEAS?" => "測定値 23.5℃",
           _ => $"不明なコマンド: {command}",
         };
-        await server.SendAsync(e.sessionInfo.SessionId, reply);
+        await server.SendAsync(sessionInfo.SessionId, reply);
       }
       catch (Exception ex)
       {
@@ -112,17 +112,17 @@ internal static class Scenario05_LegacyProtocols
     };
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
         // 受信フレーム: "CMD0" + "READ  " → 応答フレーム: "RSP0" + "OK 42 "
-        var header = Encoding.ASCII.GetString(e.message.RawData, 0, 4);
-        var body = Encoding.ASCII.GetString(e.message.RawData, 4, 6);
+        var header = Encoding.ASCII.GetString(message.RawData, 0, 4);
+        var body = Encoding.ASCII.GetString(message.RawData, 4, 6);
         SampleConsole.Result($"サーバー受信: ヘッダ='{header}' ボディ='{body}'");
 
         var reply = "RSP0" + "OK 42 ";
-        await server.SendAsync(e.sessionInfo.SessionId, Message.FromString(reply, Encoding.ASCII));
+        await server.SendAsync(sessionInfo.SessionId, Message.FromString(reply, Encoding.ASCII));
       }
       catch (Exception ex)
       {
@@ -174,15 +174,15 @@ internal static class Scenario05_LegacyProtocols
     };
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
-        var payload = Encoding.ASCII.GetString(e.message.RawData, 2, e.message.RawData.Length - 2);
-        SampleConsole.Result($"サーバー受信: ペイロード='{payload}'（フレーム全長 {e.message.RawData.Length} バイト）");
+        var payload = Encoding.ASCII.GetString(message.RawData, 2, message.RawData.Length - 2);
+        SampleConsole.Result($"サーバー受信: ペイロード='{payload}'（フレーム全長 {message.RawData.Length} バイト）");
 
         var replyPayload = payload == "TEMP?" ? "TEMP=23.5" : "ERR";
-        await server.SendAsync(e.sessionInfo.SessionId, BuildLengthPrefixedFrame(replyPayload));
+        await server.SendAsync(sessionInfo.SessionId, BuildLengthPrefixedFrame(replyPayload));
       }
       catch (Exception ex)
       {

@@ -110,7 +110,8 @@ partial class TcpClient
             _stats.LastErrorAt = DateTime.UtcNow;
           }
           _logger?.LogError(ex, "TCP Client '{Name}' automatic reconnection to {Host}:{Port} failed", Name, _config.RemoteHost, _config.RemotePort);
-          OnError?.Invoke(this, ex);
+          SafeEventDispatcher.Invoke(OnError, this, ex,
+              handlerEx => _logger?.LogError(handlerEx, "OnError handler threw an exception in client {Name}", Name));
           if (!IsConnected)
           {
             SetConnectionState(ConnectionState.Disconnected);

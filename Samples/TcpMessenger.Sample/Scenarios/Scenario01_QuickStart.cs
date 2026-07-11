@@ -30,11 +30,11 @@ internal static class Scenario01_QuickStart
     await using var server = new TcpServer(serverConfig, loggerFactory.CreateLogger<TcpServer>());
 
     // 受信したメッセージをそのまま「ECHO:」付きで送り返す
-    server.OnMessageReceived += async (_, e) =>
+    server.OnMessageReceivedAsync += async (message, sessionInfo, _) =>
     {
       try
       {
-        await server.SendAsync(e.sessionInfo.SessionId, $"ECHO: {e.message.Text?.Trim()}");
+        await server.SendAsync(sessionInfo.SessionId, $"ECHO: {message.Text?.Trim()}");
       }
       catch (Exception ex)
       {

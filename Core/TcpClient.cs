@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using System.Reactive.Subjects;
 using Dnbn.Configuration;
 using Dnbn.Filters;
 using Dnbn.Models;
@@ -18,7 +17,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   private readonly List<IMessageFilter> _filters;
   private readonly ITransport _transport;
   private readonly MessageParser _parser;
-  private readonly Subject<Message> _messageReceivedSubject = new();
+  private readonly SafeObservable<Message> _messageReceivedSubject = new();
   private Channel<SendRequest> _sendQueue = null!;
   private ChannelWriter<SendRequest> _sendQueueWriter = null!;
   private ChannelReader<SendRequest> _sendQueueReader = null!;
@@ -52,6 +51,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   // ConnectAsync・自動再接続の接続試行を直列化するロック（並行呼び出しによる二重接続を防ぐ）。
   // 取得順序は必ず _connectLock → _disconnectLock（逆順取得はデッドロックの原因になるため禁止）
   private readonly SemaphoreSlim _connectLock = new(1, 1);
+
+  /// <summary>応答待ち要求の同時実行数を制限する（nullは従来どおり無制限）。</summary>
+  private readonly SemaphoreSlim? _responseWaitSlots;
 
   // 統計情報
   private readonly ClientStats _stats = new();
@@ -166,15 +168,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     }
 
     _logger?.LogDebug("TCP Client '{Name}' connection state changed: {Previous} -> {Current}", Name, previous, newState);
-    try
-    {
-      OnConnectionStateChanged?.Invoke(this, (previous, newState));
-    }
-    catch (Exception ex)
-    {
-      // ユーザーハンドラの例外で接続処理を止めない
-      _logger?.LogError(ex, "OnConnectionStateChanged handler threw an exception in client {Name}", Name);
-    }
+    SafeEventDispatcher.Invoke(OnConnectionStateChanged, this, (previous, newState),
+      ex => _logger?.LogError(ex, "OnConnectionStateChanged handler threw an exception in client {Name}", Name));
   }
 
   /// <summary>
@@ -220,23 +215,33 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       ILogger<TcpClient>? logger = null,
       IEnumerable<IMessageFilter>? filters = null)
   {
-    _config = config;
+    TcpMessengerConfigValidator.ValidateClient(config);
+    _config = config.Clone();
     _transport = transport;
     _logger = logger;
     _filters = filters?.ToList() ?? new List<IMessageFilter>();
 
-    var encoding = TcpMessageUtils.GetEncoding(config.Encoding);
+    var encoding = TcpMessageUtils.GetEncoding(_config.Encoding);
     // 受信時の終端文字を決定：ReceiveMessageTerminatorが設定されている場合はそれを使用、未設定の場合はMessageTerminatorを使用
-    string[]? receiveTerminators = config.ReceiveMessageTerminator ??
-        (config.MessageTerminator != null ? new[] { config.MessageTerminator } : null);
+    string[]? receiveTerminators = _config.ReceiveMessageTerminator ??
+        (_config.MessageTerminator != null ? new[] { _config.MessageTerminator } : null);
     _parser = new MessageParser(
         encoding,
         receiveTerminators,
-        config.FixedHeaderLength,
-        config.FixedBodyLength,
-        config.LengthFieldOffset,
-        config.LengthFieldLength,
-        config.MaxReceiveBufferBytes);
+        _config.FixedHeaderLength,
+        _config.FixedBodyLength,
+        _config.LengthFieldOffset,
+        _config.LengthFieldLength,
+        _config.MaxReceiveBufferBytes);
+
+    if (_config.MaxConcurrentResponseWaits is int maxConcurrentResponseWaits)
+    {
+      if (maxConcurrentResponseWaits <= 0)
+      {
+        throw new ArgumentOutOfRangeException(nameof(config), "MaxConcurrentResponseWaits must be greater than zero.");
+      }
+      _responseWaitSlots = new SemaphoreSlim(maxConcurrentResponseWaits, maxConcurrentResponseWaits);
+    }
 
     // 送信キューを初期化
     InitializeSendQueue();
@@ -429,7 +434,8 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     // イベントハンドラからStateを参照したときに接続済みが見えるよう、OnConnectedより先に遷移させる
     SetConnectionState(ConnectionState.Connected);
 
-    OnConnected?.Invoke(this, EventArgs.Empty);
+    SafeEventDispatcher.Invoke(OnConnected, this, EventArgs.Empty,
+      ex => _logger?.LogError(ex, "OnConnected handler threw an exception in client {Name}", Name));
 
     // この接続専用のトークン・キューリーダーをキャプチャする。
     // 再接続でフィールドが新しいインスタンスに差し替わっても、
@@ -607,12 +613,14 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     {
       _logger?.LogError("TCP Client '{Name}' disconnected unexpectedly from {Host}:{Port} (network error)", Name, _config.RemoteHost, _config.RemotePort);
     }
-    OnDisconnected?.Invoke(this, EventArgs.Empty);
+    SafeEventDispatcher.Invoke(OnDisconnected, this, EventArgs.Empty,
+      ex => _logger?.LogError(ex, "OnDisconnected handler threw an exception in client {Name}", Name));
   }
 
   /// <summary>
   /// メッセージをキューに追加して送信し、応答を待つ（HTTPクライアントのように）
-  /// 応答が来るまで次のメッセージは送信されない
+  /// MaxConcurrentResponseWaitsが未設定の場合、複数要求を送信して応答をFIFOで待機できる。
+  /// 1の場合は先行要求の完了まで次の応答必須要求を送信しない。
   /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="message">送信するメッセージ</param>
@@ -649,27 +657,45 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    // 外部CancellationTokenと内部CancellationTokenSourceを統合
-    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
-
-    // リトライポリシーが設定されている場合は、それを使用
-    if (_config.RetryPolicy != null)
+    if (_responseWaitSlots != null)
     {
-      return await RetryHelper.ExecuteWithRetryAsync(
-          async () => await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token),
-          _config.RetryPolicy,
-          responsePredicate,
-          linkedCts.Token,
-          _logger,
-          RetryLogTarget);
+      await _responseWaitSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
+    try
+    {
+      // 応答待ち枠を待っている間に先行要求が接続を回復した可能性があるため再確認する。
+      await EnsureConnectedForSendAsync(cancellationToken).ConfigureAwait(false);
+      // 外部CancellationTokenと内部CancellationTokenSourceを統合
+      using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token, cancellationToken);
 
-    return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token);
+      // リトライポリシーが設定されている場合は、それを使用
+      if (_config.RetryPolicy != null)
+      {
+        return await RetryHelper.ExecuteWithRetryAsync(
+            async () =>
+            {
+              await EnsureConnectedForSendAsync(linkedCts.Token).ConfigureAwait(false);
+              return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token).ConfigureAwait(false);
+            },
+            _config.RetryPolicy,
+            responsePredicate,
+            linkedCts.Token,
+            _logger,
+            RetryLogTarget).ConfigureAwait(false);
+      }
+
+      return await SendAndWaitSingleAsync(requestMessage, responsePredicate, timeout, linkedCts.Token).ConfigureAwait(false);
+    }
+    finally
+    {
+      _responseWaitSlots?.Release();
+    }
   }
 
   /// <summary>
   /// 文字列を送信して応答を待つ（設定のEncodingを使用）
-  /// 応答が来るまで次のメッセージは送信されない
+  /// MaxConcurrentResponseWaitsが未設定の場合、複数要求を送信して応答をFIFOで待機できる。
+  /// 1の場合は先行要求の完了まで次の応答必須要求を送信しない。
   /// 応答メッセージはOnMessageReceivedイベントを発行しない
   /// </summary>
   /// <param name="text">送信する文字列</param>
@@ -793,14 +819,17 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       CancellationToken cancellationToken = default)
   {
     var tcs = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var sendCompletedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var request = new SendRequest
     {
       Message = requestMessage,
       ResponseTcs = tcs,
+      SendCompletedTcs = sendCompletedTcs,
       ResponsePredicate = responsePredicate,
       Timeout = timeout,
       EnqueuedAt = DateTime.UtcNow,
-      CancellationToken = cancellationToken
+      CancellationToken = cancellationToken,
+      ConnectionEpoch = Volatile.Read(ref _connectionEpoch)
     };
 
     // タイムアウト処理。受信ループのマッチングと競合しないよう、
@@ -813,17 +842,28 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
         if (tcs.TrySetException(new TimeoutException($"Request timed out after {timeout.TotalSeconds} seconds")))
         {
           _pendingResponseRequests.Remove(request);
+          SuspendResponseMatchingIfRecoveryRequired(request);
         }
       }
     });
 
-    // キューに追加
-    await _sendQueueWriter.WriteAsync(request, cancellationToken);
+    using var cancellationRegistration = cancellationToken.Register(() =>
+    {
+      lock (_pendingResponseRequestsLock)
+      {
+        if (tcs.TrySetCanceled(cancellationToken))
+        {
+          _pendingResponseRequests.Remove(request);
+          SuspendResponseMatchingIfRecoveryRequired(request);
+        }
+      }
+    });
 
-    // 応答を待つ
     try
     {
-      return await tcs.Task.WaitAsync(cancellationToken);
+      // キューに追加して応答を待つ
+      await _sendQueueWriter.WriteAsync(request, cancellationToken).ConfigureAwait(false);
+      return await tcs.Task.ConfigureAwait(false);
     }
     catch (TimeoutException ex)
     {
@@ -835,8 +875,59 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
         _stats.LastErrorAt = DateTime.UtcNow;
       }
       _logger?.LogWarning("Request timeout for client {Name}: {Message}", Name, ex.Message);
-      OnError?.Invoke(this, ex);
+      SafeEventDispatcher.Invoke(OnError, this, ex,
+          handlerEx => _logger?.LogError(handlerEx, "OnError handler threw an exception in client {Name}", Name));
+      await RecoverFromIncompleteRequestAsync(request).ConfigureAwait(false);
       throw;
+    }
+    catch (OperationCanceledException)
+    {
+      await RecoverFromIncompleteRequestAsync(request).ConfigureAwait(false);
+      throw;
+    }
+    catch
+    {
+      await RecoverFromIncompleteRequestAsync(request).ConfigureAwait(false);
+      throw;
+    }
+  }
+
+  private void SuspendResponseMatchingIfRecoveryRequired(SendRequest request)
+  {
+    if (_config.IncompleteRequestRecovery == IncompleteRequestRecovery.Reconnect &&
+        Volatile.Read(ref request.WireWriteStarted) != 0)
+    {
+      _responseMatchingSuspended = true;
+    }
+  }
+
+  private async Task RecoverFromIncompleteRequestAsync(SendRequest request)
+  {
+    if (Volatile.Read(ref request.WireWriteStarted) == 0)
+    {
+      return;
+    }
+
+    if (_config.IncompleteRequestRecovery == IncompleteRequestRecovery.KeepConnection)
+    {
+      _logger?.LogWarning(
+          "Request for client {Name} ended after wire transmission started; keeping the connection may allow a late response to match a later request. " +
+          "Set IncompleteRequestRecovery=Reconnect for safe FIFO correlation recovery.", Name);
+      return;
+    }
+
+    if (Interlocked.Exchange(ref request.RecoveryStarted, 1) != 0)
+    {
+      return;
+    }
+
+    var disconnected = await DisconnectIfCurrentEpochAsync(
+        request.ConnectionEpoch,
+        isIntentional: false).ConfigureAwait(false);
+    if (disconnected && !_disposed)
+    {
+      _logger?.LogInformation("TCP Client '{Name}' reconnecting after an incomplete request invalidated FIFO response correlation", Name);
+      StartAutoReconnect();
     }
   }
 
@@ -1138,6 +1229,9 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     public CancellationToken CancellationToken { get; set; }
     public TaskCompletionSource? SendCompletedTcs { get; set; } // 送信完了通知（通知電文用）
     public bool IsKeepAlive { get; set; } // KeepAlive電文（応答はOnKeepAliveResponseReceivedへ配送される）
+    public int ConnectionEpoch { get; set; }
+    public int WireWriteStarted;
+    public int RecoveryStarted;
   }
 
 }

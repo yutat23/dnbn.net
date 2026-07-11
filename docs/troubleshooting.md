@@ -17,6 +17,7 @@
 - `MessageTerminator` などのメッセージ境界設定が送受信で合っているか
 - `TimeoutMilliseconds` が短すぎないか
 - サーバー側イベントハンドラで例外が出ていないか
+- 応答しないコマンドを誤って`SendAsync`で送っていないか（`SendOneWayAsync`を使用）
 
 ## メッセージが分割/結合される
 
@@ -25,6 +26,20 @@ TCPはストリームなので、区切り設定が合っていないと複数�
 - テキスト系なら `MessageTerminator`
 - 固定長なら `FixedHeaderLength` と `FixedBodyLength`
 - 可変長なら `FixedHeaderLength`、`LengthFieldOffset`、`LengthFieldLength`
+
+複数の終端候補が同じ位置で一致する場合は最長一致になります。CR/LF/CRLFを受ける場合は `["\r\n", "\r", "\n"]` のように設定できます。
+
+## timeout後に次の要求が誤った応答を受ける
+
+相関IDがなくFIFOで応答を対応付けるプロトコルでは、timeout後の遅延応答が後続要求へ対応付く可能性があります。次を設定してください。
+
+```json
+{
+  "MaxConcurrentResponseWaits": 1,
+  "IncompleteRequestRecovery": "Reconnect",
+  "WaitForConnectionOnSend": true
+}
+```
 
 ## `OnMessageReceived` に応答が来ない
 
@@ -53,4 +68,4 @@ NW障害や中継機器の無通信タイムアウトで接続が切れても、
 
 ## 受信バッファが大きくなる
 
-終端文字や長さフィールドを設定していない場合、メッセージ境界を判断できずバッファが伸びる可能性があります。プロトコル仕様を見直し、必要に応じて `MaxReceiveBufferBytes` を設定してください。
+終端文字または長さフィールドの設定は必須です。不完全・矛盾した設定はendpoint生成時に例外になります。大きな宣言長や終端未到着によるメモリ使用を制限するには`MaxReceiveBufferBytes`も設定してください。

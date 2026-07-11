@@ -12,6 +12,8 @@ var server = factory.CreateServer("MainServer");
 var client = factory.CreateClient("MainClient");
 ```
 
+型付き設定から生成する場合は`ITypedTcpMessengerFactory`を使用します。既存の`ITcpMessengerFactory`実装との互換性を保つためinterfaceを分離しています。
+
 ## ITcpServer
 
 主なメンバー:
@@ -26,6 +28,7 @@ var client = factory.CreateClient("MainClient");
 | `GetAllSessions()` | 全セッション取得 |
 | `ConnectionInfo` | 接続状態と統計 |
 | `OnMessageReceived` | メッセージ受信イベント |
+| `OnMessageReceivedAsync` | セッション内の順序を保ってawaitされる非同期ハンドラ |
 | `OnClientConnected` | クライアント接続イベント |
 | `OnClientDisconnected` | クライアント切断イベント |
 | `OnError` | エラーイベント |
@@ -55,6 +58,12 @@ var client = factory.CreateClient("MainClient");
 | `OnKeepAliveResponseReceived` | KeepAlive応答イベント |
 | `OnConnectionStateChanged` | 接続状態変化イベント |
 | `OnMessageTrace` | 要求・応答・通知・KeepAliveを含む全送受信の診断イベント |
+
+`SendAsync` / `SendAndWaitAsync`は応答必須、`SendOneWayAsync`は応答なしの契約です。`MaxConcurrentResponseWaits`は前者だけを制限します。
+
+## IDnbnClientRegistry
+
+Generic Hostと連動する名前付きクライアントを単一インスタンスとして取得します。設定ファイル由来と型付き動的設定の両方を登録できます。
 
 ### ConnectionState
 

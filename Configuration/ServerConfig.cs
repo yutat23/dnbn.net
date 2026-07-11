@@ -32,6 +32,11 @@ public class ServerConfig
   public int ListenPort { get; set; }
 
   /// <summary>
+  /// 待ち受けIPアドレス。既定値は全IPv4インターフェイス（0.0.0.0）。
+  /// </summary>
+  public string BindAddress { get; set; } = "0.0.0.0";
+
+  /// <summary>
   /// 文字エンコーディング（UTF-8, Shift-JIS等）
   /// </summary>
   public string Encoding { get; set; } = "UTF-8";
@@ -89,7 +94,27 @@ public class ServerConfig
   /// 未設定（null）の場合は従来どおりOSの既定動作。
   /// </summary>
   public TcpKeepAliveConfig? TcpKeepAlive { get; set; }
+
+  /// <summary>この設定の複製を作成する。</summary>
+  public ServerConfig Clone()
+  {
+    return new ServerConfig
+    {
+      Name = Name,
+      ListenPort = ListenPort,
+      BindAddress = BindAddress,
+      Encoding = Encoding,
+      MessageTerminator = MessageTerminator,
+      ReceiveMessageTerminator = ReceiveMessageTerminator?.ToArray(),
+      ClientIdentification = ClientIdentification,
+      FixedHeaderLength = FixedHeaderLength,
+      FixedBodyLength = FixedBodyLength,
+      LengthFieldOffset = LengthFieldOffset,
+      LengthFieldLength = LengthFieldLength,
+      EnableMessageLogging = EnableMessageLogging,
+      MaxReceiveBufferBytes = MaxReceiveBufferBytes,
+      TcpKeepAlive = TcpKeepAlive?.Clone()
+    };
+  }
 }
-
-
 
