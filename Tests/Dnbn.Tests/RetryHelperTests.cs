@@ -58,6 +58,29 @@ public class RetryHelperTests
     Assert.Equal(5000, policy.GetDelayMs(10));
   }
 
+  [Fact]
+  public void GetDelayMs_Exponential_LargeRetryCountStaysCappedWithoutOverflow()
+  {
+    var policy = new RetryPolicy
+    {
+      RetryDelayStrategy = RetryDelayStrategy.Exponential,
+      InitialDelayMs = 500,
+      MaxDelayMs = 60000
+    };
+
+    Assert.Equal(60000, policy.GetDelayMs(23));
+    Assert.Equal(60000, policy.GetDelayMs(1000));
+    Assert.Equal(60000, policy.GetDelayMs(int.MaxValue));
+  }
+
+  [Fact]
+  public void GetDelayMs_NegativeRetryCount_Throws()
+  {
+    var policy = new RetryPolicy();
+
+    Assert.Throws<ArgumentOutOfRangeException>(() => policy.GetDelayMs(-1));
+  }
+
   // ---------------------------------------------------------------------------
   // ExecuteWithRetryAsync テスト
   // ---------------------------------------------------------------------------

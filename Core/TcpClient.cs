@@ -38,7 +38,6 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   private bool _responseMatchingSuspended;
   private CancellationTokenSource? _keepAliveTimerCts;
   private CancellationTokenSource _cancellationTokenSource = new();
-  private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
   private volatile bool _isIntentionalDisconnect = false;
   private Task? _reconnectTask;
@@ -338,18 +337,6 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
 
         ResetConnectionStateForConnect();
 
-        // 既存の登録を破棄
-        _externalCancellationTokenRegistration?.Dispose();
-
-        // 外部CancellationTokenがキャンセルされたときに内部CancellationTokenSourceもキャンセルする
-        _externalCancellationTokenRegistration = cancellationToken.Register(() =>
-        {
-          if (!_cancellationTokenSource.IsCancellationRequested)
-          {
-            _cancellationTokenSource.Cancel();
-          }
-        });
-
         SetConnectionState(ConnectionState.Connecting);
       }
       finally
@@ -554,10 +541,6 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   {
     var wasConnected = IsConnected;
     _isIntentionalDisconnect = isIntentional;
-
-    // 外部CancellationTokenの登録を破棄
-    _externalCancellationTokenRegistration?.Dispose();
-    _externalCancellationTokenRegistration = null;
 
     // CancellationTokenSourceを先にキャンセル（これによりキープアライブタイマーのElapsedイベント内のチェックが機能する）
     _cancellationTokenSource.Cancel();
@@ -1184,7 +1167,6 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
       return;
     }
     await DisconnectAsync().ConfigureAwait(false);
-    _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     StopKeepAlive();
@@ -1207,7 +1189,6 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     }
     // ConfigureAwait(false)を使用してデッドロックを回避
     DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-    _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     StopKeepAlive();

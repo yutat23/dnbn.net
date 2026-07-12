@@ -134,6 +134,14 @@ public class MessageParser
 
       if (matchedTerminatorBytes != null && earliestIndex < int.MaxValue)
       {
+        // 短い終端文字が長い候補のprefixで、かつ現在のバッファ末尾にある場合は、
+        // 次のTCPチャンクで長い候補が完成する可能性があるため確定を保留する。
+        // 例: CR/CRLFを許可し、現在のチャンクがCRで終わっている場合。
+        if (CouldCompleteLongerTerminator(earliestIndex, matchedTerminatorBytes))
+        {
+          return null;
+        }
+
         var messageLength = earliestIndex + matchedTerminatorBytes.Length;
         messageData = ExtractAndRemoveFromBuffer(messageLength);
       }
@@ -227,6 +235,18 @@ public class MessageParser
       }
     }
     return -1;
+  }
+
+  private bool CouldCompleteLongerTerminator(int terminatorIndex, byte[] matchedTerminator)
+  {
+    if (_terminatorBytes == null || terminatorIndex + matchedTerminator.Length != _buffer.Count)
+    {
+      return false;
+    }
+
+    return _terminatorBytes.Any(candidate =>
+        candidate.Length > matchedTerminator.Length &&
+        candidate.AsSpan(0, matchedTerminator.Length).SequenceEqual(matchedTerminator));
   }
 
   private byte[] ExtractAndRemoveFromBuffer(int count)

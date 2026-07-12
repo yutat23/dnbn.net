@@ -1,6 +1,7 @@
 using System.Text;
 using Dnbn.Configuration;
 using Dnbn.Core;
+using Dnbn.Filters;
 using Dnbn.Models;
 using TcpClient = Dnbn.Core.TcpClient;
 
@@ -8,6 +9,26 @@ namespace Dnbn.Tests;
 
 public class TcpClientResponseSafetyTests
 {
+  private sealed class BlockingSendingFilter : IMessageFilter
+  {
+    private readonly TaskCompletionSource _continue = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Exited { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<Message> OnSendingAsync(Message msg, IMessageContext ctx)
+    {
+      Entered.TrySetResult();
+      await _continue.Task;
+      Exited.TrySetResult();
+      return msg;
+    }
+
+    public Task<Message> OnReceivedAsync(Message msg, IMessageContext ctx) => Task.FromResult(msg);
+
+    public void Continue() => _continue.TrySetResult();
+  }
+
   private static ClientConfig CreateConfig(
       int? maxConcurrentResponseWaits = null,
       IncompleteRequestRecovery recovery = IncompleteRequestRecovery.KeepConnection)
@@ -98,5 +119,28 @@ public class TcpClientResponseSafetyTests
 
     await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
     await TestWait.UntilAsync(() => transport.ConnectCalls >= 2 && client.IsConnected);
+  }
+
+  [Fact]
+  public async Task TimeoutWhileSendingFilterIsAwaited_DoesNotWriteRequestAfterTimeout()
+  {
+    var transport = new MockTransport();
+    var filter = new BlockingSendingFilter();
+    await using var client = new TcpClient(
+        CreateConfig(recovery: IncompleteRequestRecovery.Reconnect),
+        transport,
+        filters: [filter]);
+    await client.ConnectAsync();
+
+    var request = client.SendAsync("must-not-be-sent", TimeSpan.FromMilliseconds(500));
+    await filter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await Assert.ThrowsAsync<TimeoutException>(() => request);
+
+    filter.Continue();
+    await filter.Exited.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await Task.Delay(25);
+
+    Assert.Empty(transport.SentData);
+    Assert.True(client.IsConnected);
   }
 }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.1
+
+- 送信フィルターの実行中にtimeout/cancelされた要求が後からwire送信される競合を修正
+- 指数バックオフを上限値へ飽和させ、長時間の無限再接続で`int`オーバーフローしないよう修正
+- `ConnectAsync` / `StartAsync`のCancellationTokenを接続・起動操作の期間だけ使用するよう修正
+- `OnMessageReceivedAsync`内から`StopAsync`を呼んだ場合の自己待機デッドロックを修正
+- prefixが重なる終端文字候補をTCPチャンク境界でも最長一致で解析
+- Microsoft.Extensions依存を8.0系の修正版へ更新し、既知の脆弱な推移的依存を解消
+- CI/publishのrestoreをNuGet脆弱性監査付きにし、監査警告をリリース失敗として扱う
+
+### Compatibility
+
+- CRとCRLFのようにprefixが重なる終端文字を併用した場合、短い終端文字だけでバッファが終わると、次の1バイトで候補が確定するまで受信通知を保留する
+- `ConnectAsync` / `StartAsync`へ渡したCancellationTokenを完了後にcancelしても、確立済み接続・起動済みサーバーは停止しない
+
 ## 1.5.0
 
 - 応答必須要求の同時待機数を制限する`MaxConcurrentResponseWaits`を追加

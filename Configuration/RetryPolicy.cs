@@ -72,17 +72,40 @@ public class RetryPolicy
   /// </summary>
   public int GetDelayMs(int retryCount)
   {
-    var delay = RetryDelayStrategy switch
+    if (retryCount < 0)
     {
-      RetryDelayStrategy.Fixed => InitialDelayMs,
-      RetryDelayStrategy.Exponential => InitialDelayMs * (int)Math.Pow(2, retryCount),
-      _ => InitialDelayMs
-    };
+      throw new ArgumentOutOfRangeException(nameof(retryCount));
+    }
+    if (InitialDelayMs < 0 || MaxDelayMs < 0 || MaxDelayMs < InitialDelayMs)
+    {
+      throw new InvalidOperationException("Retry delays must be non-negative and MaxDelayMs must be greater than or equal to InitialDelayMs.");
+    }
 
-    // MaxDelayMsを上限として適用
-    return Math.Min(delay, MaxDelayMs);
+    if (RetryDelayStrategy == RetryDelayStrategy.Fixed)
+    {
+      return Math.Min(InitialDelayMs, MaxDelayMs);
+    }
+
+    if (RetryDelayStrategy != RetryDelayStrategy.Exponential)
+    {
+      return Math.Min(InitialDelayMs, MaxDelayMs);
+    }
+
+    // intで指数乗算してから上限を適用すると、長時間の無限リトライで
+    // オーバーフローして負数になり、Task.Delayが失敗する。
+    // 計算途中からMaxDelayMsへ飽和させることで、任意のretryCountを安全に扱う。
+    if (InitialDelayMs == 0 || MaxDelayMs == 0)
+    {
+      return 0;
+    }
+
+    long delay = InitialDelayMs;
+    for (var i = 0; i < retryCount && delay < MaxDelayMs; i++)
+    {
+      delay = Math.Min(delay * 2L, MaxDelayMs);
+    }
+
+    return (int)Math.Min(delay, MaxDelayMs);
   }
 }
-
-
 

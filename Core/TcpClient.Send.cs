@@ -54,15 +54,35 @@ partial class TcpClient
             filteredMessage = await filter.OnSendingAsync(filteredMessage, ctx);
           }
 
+          // フィルターのawait中にもtimeout/cancelは進行する。
+          // 完了済み要求を後からwireへ送ると孤児応答や二重実行につながるため、
+          // wire開始との境界をpendingロック内で確定する。
+          if (request.ResponseTcs != null)
+          {
+            lock (_pendingResponseRequestsLock)
+            {
+              if (request.ResponseTcs.Task.IsCompleted || request.CancellationToken.IsCancellationRequested)
+              {
+                _pendingResponseRequests.Remove(request);
+                request.SendCompletedTcs?.TrySetCanceled(request.CancellationToken);
+                continue;
+              }
+
+              Volatile.Write(ref request.WireWriteStarted, 1);
+            }
+          }
+          else
+          {
+            request.CancellationToken.ThrowIfCancellationRequested();
+            Volatile.Write(ref request.WireWriteStarted, 1);
+          }
+
           // メッセージログ出力（EnableMessageLogging有効時はInformationレベル）
           _logger?.Log(MessageLogLevel, "TCP Client '{Name}' sending message to {Host}:{Port}: {MessageText}",
               Name, _config.RemoteHost, _config.RemotePort, filteredMessage.Text?.Trim());
 
           // MessageTerminatorを自動的に追加
           var dataToSend = TcpMessageUtils.AppendMessageTerminatorIfNeeded(filteredMessage, _config.MessageTerminator, _config.Encoding);
-          // これ以降のtimeout/cancel/send failureは、部分書き込みを含め応答相関を
-          // 信頼できない可能性があるため接続回復の対象になる。
-          Volatile.Write(ref request.WireWriteStarted, 1);
           await _transport.SendAsync(dataToSend, request.CancellationToken);
 
           // 統計情報を更新

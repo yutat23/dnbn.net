@@ -35,8 +35,8 @@ jobs:
             8.0.x
             10.0.x
 
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore and audit dependencies
+        run: dotnet restore dnbn.net.sln -p:NuGetAudit=true -p:NuGetAuditMode=all -warnaserror
 
       - name: Build
         run: dotnet build --configuration Release --no-restore

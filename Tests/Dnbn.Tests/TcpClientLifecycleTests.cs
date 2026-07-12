@@ -156,6 +156,21 @@ public class TcpClientLifecycleTests
     Assert.False(client.IsConnected);
   }
 
+  [Fact]
+  public async Task ConnectAsync_CallerTokenCancelledAfterSuccess_DoesNotDisconnect()
+  {
+    var transport = new MockTransport();
+    await using var client = new TcpClient(CreateConfig(), transport);
+    using var cts = new CancellationTokenSource();
+
+    await client.ConnectAsync(cts.Token);
+    cts.Cancel();
+    await Task.Delay(50);
+
+    Assert.True(client.IsConnected);
+    Assert.Equal(ConnectionState.Connected, client.State);
+  }
+
   // ---------------------------------------------------------------------------
   // 自動再接続（NW障害時）
   // ---------------------------------------------------------------------------

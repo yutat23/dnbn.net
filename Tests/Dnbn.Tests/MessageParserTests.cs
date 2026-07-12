@@ -52,11 +52,14 @@ public class MessageParserTests
   public void Parse_TerminatorMode_MultipleTerminators_UsesEarliest()
   {
     var parser = new MessageParser(Utf8, new[] { "\r\n", "\r" });
-    var data = Utf8.GetBytes("LINE\r");
-    var messages = parser.Parse(data);
+    var first = parser.Parse(Utf8.GetBytes("LINE\r"));
+    var second = parser.Parse(Utf8.GetBytes("NEXT\r\n"));
 
-    Assert.Single(messages);
-    Assert.Equal("LINE\r", messages[0].Text);
+    // CRはCRLFのprefixなので、次の1バイトで単独CRと確定するまで保留する。
+    Assert.Empty(first);
+    Assert.Equal(2, second.Count);
+    Assert.Equal("LINE\r", second[0].Text);
+    Assert.Equal("NEXT\r\n", second[1].Text);
   }
 
   [Fact]

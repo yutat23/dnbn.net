@@ -27,7 +27,7 @@ TCPはストリームなので、区切り設定が合っていないと複数�
 - 固定長なら `FixedHeaderLength` と `FixedBodyLength`
 - 可変長なら `FixedHeaderLength`、`LengthFieldOffset`、`LengthFieldLength`
 
-複数の終端候補が同じ位置で一致する場合は最長一致になります。CR/LF/CRLFを受ける場合は `["\r\n", "\r", "\n"]` のように設定できます。
+複数の終端候補が同じ位置で一致する場合は最長一致になります。CR/LF/CRLFを受ける場合は `["\r\n", "\r", "\n"]` のように設定できます。TCPチャンクがCRで終わった場合は、CR単独かCRLFかを確定するため、次の1バイトを受信するまでその電文の通知を保留します。
 
 ## timeout後に次の要求が誤った応答を受ける
 

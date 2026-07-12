@@ -14,11 +14,25 @@ public class MessageParserEdgeCaseTests
   {
     var parser = new MessageParser(Encoding.UTF8, ["\r", "\r\n", "\n"]);
 
-    var messages = parser.Parse(Encoding.UTF8.GetBytes("OK\r\nNEXT\r"));
+    var messages = parser.Parse(Encoding.UTF8.GetBytes("OK\r\nNEXT\rX\n"));
 
-    Assert.Equal(2, messages.Count);
+    Assert.Equal(3, messages.Count);
     Assert.Equal("OK\r\n", messages[0].Text);
     Assert.Equal("NEXT\r", messages[1].Text);
+    Assert.Equal("X\n", messages[2].Text);
+  }
+
+  [Fact]
+  public void Parse_OverlappingTerminators_SplitAcrossChunks_WaitsForLongestMatch()
+  {
+    var parser = new MessageParser(Encoding.UTF8, ["\r\n", "\r", "\n"]);
+
+    var first = parser.Parse(Encoding.UTF8.GetBytes("OK\r"));
+    var second = parser.Parse(Encoding.UTF8.GetBytes("\n"));
+
+    Assert.Empty(first);
+    Assert.Single(second);
+    Assert.Equal("OK\r\n", second[0].Text);
   }
 
   private static readonly Encoding Utf8 = Encoding.UTF8;

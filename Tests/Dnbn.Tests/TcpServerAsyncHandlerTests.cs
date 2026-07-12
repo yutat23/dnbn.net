@@ -59,4 +59,49 @@ public class TcpServerAsyncHandlerTests
     await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => server.StopAsync()));
     Assert.False(server.IsRunning);
   }
+
+  [Fact]
+  public async Task StartAsync_CallerTokenCancelledAfterSuccess_DoesNotStopServer()
+  {
+    var port = NextPort();
+    await using var server = new TcpServer(new ServerConfig
+    {
+      Name = "StartTokenServer",
+      ListenPort = port,
+      MessageTerminator = "\n"
+    });
+    using var cts = new CancellationTokenSource();
+
+    await server.StartAsync(cts.Token);
+    cts.Cancel();
+    await Task.Delay(50);
+
+    Assert.True(server.IsRunning);
+  }
+
+  [Fact]
+  public async Task AsyncHandler_CanStopServerWithoutWaitingForItsOwnSessionTask()
+  {
+    var port = NextPort();
+    await using var server = new TcpServer(new ServerConfig
+    {
+      Name = "HandlerStopServer",
+      ListenPort = port,
+      MessageTerminator = "\n"
+    });
+    var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    server.OnMessageReceivedAsync += async (_, _, _) =>
+    {
+      await server.StopAsync();
+      stopped.TrySetResult();
+    };
+    await server.StartAsync();
+    using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+    await socket.ConnectAsync(IPAddress.Loopback, port);
+
+    await socket.SendAsync(Encoding.UTF8.GetBytes("STOP\n"), SocketFlags.None);
+    await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+    Assert.False(server.IsRunning);
+  }
 }

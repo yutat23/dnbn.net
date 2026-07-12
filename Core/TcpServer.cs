@@ -20,10 +20,10 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   private readonly ConcurrentDictionary<string, ServerSession> _sessions = new();
   private readonly SafeObservable<(Message message, SessionInfo sessionInfo)> _messageReceivedSubject = new();
   private CancellationTokenSource _cancellationTokenSource = new();
-  private CancellationTokenRegistration? _externalCancellationTokenRegistration;
   private bool _disposed = false;
   private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
   private readonly ConcurrentDictionary<long, Task> _clientTasks = new();
+  private readonly AsyncLocal<long?> _currentClientTaskId = new();
   private Task? _acceptLoopTask;
   private long _nextClientTaskId;
 
@@ -110,20 +110,12 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         _cancellationTokenSource = new CancellationTokenSource();
       }
 
-      _externalCancellationTokenRegistration?.Dispose();
       var connectionCts = _cancellationTokenSource;
       var listener = new TcpListener(IPAddress.Parse(_config.BindAddress), _config.ListenPort);
       listener.Start();
       _listener = listener;
       _isRunning = true;
       lock (_statsLock) _startedAt = DateTime.UtcNow;
-
-      _externalCancellationTokenRegistration = cancellationToken.Register(() =>
-      {
-        if (!connectionCts.IsCancellationRequested) connectionCts.Cancel();
-        listener.Stop();
-        _isRunning = false;
-      });
 
       _logger?.LogInformation("TCP Server '{Name}' started on port {Port}", Name, _config.ListenPort);
       _acceptLoopTask = AcceptClientsAsync(listener, connectionCts.Token);
@@ -144,8 +136,6 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     try
     {
       cancellationToken.ThrowIfCancellationRequested();
-      _externalCancellationTokenRegistration?.Dispose();
-      _externalCancellationTokenRegistration = null;
       if (!_cancellationTokenSource.IsCancellationRequested) _cancellationTokenSource.Cancel();
       _isRunning = false;
       _listener?.Stop();
@@ -163,7 +153,13 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         await session.DisconnectAsync().ConfigureAwait(false);
       }
 
-      var clientTasks = _clientTasks.Values.ToArray();
+      // OnMessageReceivedAsync内からStopAsyncが呼ばれた場合、現在のセッションタスクを
+      // 待つと自分自身の完了待ちになりデッドロックするため除外する。
+      var currentClientTaskId = _currentClientTaskId.Value;
+      var clientTasks = _clientTasks
+          .Where(pair => pair.Key != currentClientTaskId)
+          .Select(pair => pair.Value)
+          .ToArray();
       if (clientTasks.Length > 0)
       {
         await Task.WhenAll(clientTasks).WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -215,6 +211,8 @@ public class TcpServer : ITcpServer, IAsyncDisposable
   {
     // 呼び出し側がdictionaryへ登録する機会を保証する。
     await Task.Yield();
+    var previousTaskId = _currentClientTaskId.Value;
+    _currentClientTaskId.Value = taskId;
     try
     {
       await HandleClientAsync(tcpClient).ConfigureAwait(false);
@@ -226,6 +224,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     }
     finally
     {
+      _currentClientTaskId.Value = previousTaskId;
       _clientTasks.TryRemove(taskId, out _);
     }
   }
@@ -456,7 +455,6 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       return;
     }
     await StopAsync().ConfigureAwait(false);
-    _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     _lifecycleLock.Dispose();
@@ -474,7 +472,6 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     }
     // ConfigureAwait(false)を使用してデッドロックを回避
     StopAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-    _externalCancellationTokenRegistration?.Dispose();
     _cancellationTokenSource.Dispose();
     _messageReceivedSubject.Dispose();
     _lifecycleLock.Dispose();
