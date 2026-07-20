@@ -25,10 +25,23 @@ internal static class TcpKeepAliveHelper
 
     // 詳細パラメータはOS/バージョンにより未対応の場合があるため、
     // 失敗しても基本のキープアライブ有効化だけで継続する
-    TrySetTcpOption(socket, SocketOptionName.TcpKeepAliveTime, config.TimeSeconds);
-    TrySetTcpOption(socket, SocketOptionName.TcpKeepAliveInterval, config.IntervalSeconds);
-    TrySetTcpOption(socket, SocketOptionName.TcpKeepAliveRetryCount, config.RetryCount);
+    TrySetTcpOption(socket, TcpKeepAliveTime, config.TimeSeconds);
+    TrySetTcpOption(socket, TcpKeepAliveInterval, config.IntervalSeconds);
+    TrySetTcpOption(socket, TcpKeepAliveRetryCount, config.RetryCount);
   }
+
+#if NETSTANDARD2_0
+  // これらの列挙値は.NET Core 3.0で追加されたため数値で指定する。
+  // Windows(10 1709以降)ではsetsockoptへそのまま渡り機能し、
+  // 未対応環境ではSocketException/PlatformNotSupportedExceptionが握りつぶされる
+  private const SocketOptionName TcpKeepAliveTime = (SocketOptionName)3;
+  private const SocketOptionName TcpKeepAliveInterval = (SocketOptionName)17;
+  private const SocketOptionName TcpKeepAliveRetryCount = (SocketOptionName)16;
+#else
+  private const SocketOptionName TcpKeepAliveTime = SocketOptionName.TcpKeepAliveTime;
+  private const SocketOptionName TcpKeepAliveInterval = SocketOptionName.TcpKeepAliveInterval;
+  private const SocketOptionName TcpKeepAliveRetryCount = SocketOptionName.TcpKeepAliveRetryCount;
+#endif
 
   private static void TrySetTcpOption(Socket socket, SocketOptionName name, int value)
   {

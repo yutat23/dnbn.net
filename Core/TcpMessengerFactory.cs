@@ -47,7 +47,7 @@ public class TcpMessengerFactory : ITypedTcpMessengerFactory
   /// <inheritdoc />
   public ITcpServer CreateServer(ServerConfig config)
   {
-    ArgumentNullException.ThrowIfNull(config);
+    if (config is null) throw new ArgumentNullException(nameof(config));
     TcpMessengerConfigValidator.ValidateServer(config);
     var logger = _loggerFactory?.CreateLogger<TcpServer>();
     return new TcpServer(config.Clone(), logger, _filters);
@@ -69,7 +69,7 @@ public class TcpMessengerFactory : ITypedTcpMessengerFactory
   /// <inheritdoc />
   public ITcpClient CreateClient(ClientConfig config)
   {
-    ArgumentNullException.ThrowIfNull(config);
+    if (config is null) throw new ArgumentNullException(nameof(config));
     TcpMessengerConfigValidator.ValidateClient(config);
     var clientConfig = config.Clone();
     var transport = new TcpTransport(clientConfig.RemoteHost, clientConfig.RemotePort, clientConfig.TcpKeepAlive);

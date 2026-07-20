@@ -34,10 +34,15 @@ public interface ITcpServer : IDisposable
   /// 既存の独自ITcpServer実装とのソース互換性のため、既定実装は何もしない。
   /// </summary>
   event TcpServerMessageHandler? OnMessageReceivedAsync
+#if NETSTANDARD2_0
+  // netstandard2.0 はインターフェイスの既定実装を利用できないため、実装側で定義が必要
+  ;
+#else
   {
     add { }
     remove { }
   }
+#endif
 
   /// <summary>
   /// クライアント接続イベント

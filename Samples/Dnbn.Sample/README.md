@@ -1,4 +1,4 @@
-# TcpMessenger.Sample
+# Dnbn.Sample
 
 dnbn.net（TCPメッセージ送受信ライブラリ）の機能を**シナリオ別に実演する**サンプル集です。
 1シナリオ＝1ファイルで自己完結しており、コードはそのままコピーして使える形になっています。
@@ -7,10 +7,10 @@ dnbn.net（TCPメッセージ送受信ライブラリ）の機能を**シナリ�
 
 ```bash
 # メニューから選択
-dotnet run --project Samples/TcpMessenger.Sample
+dotnet run --project Samples/Dnbn.Sample
 
 # シナリオ番号を直接指定（例: シナリオ3）
-dotnet run --project Samples/TcpMessenger.Sample -- 3
+dotnet run --project Samples/Dnbn.Sample -- 3
 ```
 
 シナリオ1〜6は人の操作なしで自動実行されます。7はWeb UI確認のためEnter入力で終了、8は対話モードです。

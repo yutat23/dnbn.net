@@ -99,7 +99,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     await _lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
     try
     {
-      ObjectDisposedException.ThrowIf(_disposed, this);
+      if (_disposed) throw new ObjectDisposedException(GetType().FullName);
       if (IsRunning) return;
 
       cancellationToken.ThrowIfCancellationRequested();
@@ -181,7 +181,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
     {
       try
       {
-        var tcpClient = await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
+        var tcpClient = await AcceptTcpClientAsync(listener, cancellationToken).ConfigureAwait(false);
         var taskId = Interlocked.Increment(ref _nextClientTaskId);
         var task = ObserveClientAsync(taskId, tcpClient);
         _clientTasks[taskId] = task;
@@ -205,6 +205,40 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         }
       }
     }
+  }
+
+  private static async Task<System.Net.Sockets.TcpClient> AcceptTcpClientAsync(TcpListener listener, CancellationToken cancellationToken)
+  {
+#if NETSTANDARD2_0
+    // CancellationToken付きAcceptTcpClientAsyncは.NET 5以降のみ。
+    // キャンセル後に完了した孤児Acceptは接続を破棄し、例外は観測して握りつぶす
+    var acceptTask = listener.AcceptTcpClientAsync();
+    try
+    {
+      return await acceptTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+    catch (OperationCanceledException)
+    {
+      _ = acceptTask.ContinueWith(
+          static t =>
+          {
+            if (t.Status == TaskStatus.RanToCompletion)
+            {
+              t.Result.Dispose();
+            }
+            else
+            {
+              _ = t.Exception;
+            }
+          },
+          CancellationToken.None,
+          TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
+      throw;
+    }
+#else
+    return await listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
+#endif
   }
 
   private async Task ObserveClientAsync(long taskId, System.Net.Sockets.TcpClient tcpClient)
@@ -627,7 +661,7 @@ public class TcpServer : ITcpServer, IAsyncDisposable
         await _sendLock.WaitAsync(linkedCts.Token).ConfigureAwait(false);
         try
         {
-          await _stream.WriteAsync(data, linkedCts.Token).ConfigureAwait(false);
+          await _stream.WriteAsync(data, 0, data.Length, linkedCts.Token).ConfigureAwait(false);
           await _stream.FlushAsync(linkedCts.Token).ConfigureAwait(false);
         }
         finally
@@ -653,7 +687,12 @@ public class TcpServer : ITcpServer, IAsyncDisposable
       _cancellationTokenSource.Cancel();
       if (_stream != null)
       {
+#if NETSTANDARD2_0
+        _stream.Dispose();
+        await Task.CompletedTask;
+#else
         await _stream.DisposeAsync().ConfigureAwait(false);
+#endif
         _stream = null;
       }
       _tcpClient?.Dispose();

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <!-- .NET Framework プロジェクトの既定コンパイラ設定（C# 7.3）のままで
+         dnbn.net を利用できることを示すため、あえて 7.3 に固定している -->
+    <LangVersion>7.3</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!-- netstandard2.0 依存パッケージのバージョン差異をバインディングリダイレクトで解決する -->
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- NuGet 利用時は: dotnet add package dnbn.net （netstandard2.0 ビルドが選択される） -->
+    <ProjectReference Include="..\..\dnbn.net.csproj" />
+  </ItemGroup>
+
+  <!-- Windows 以外の OS（CI の ubuntu 等）でもコンパイル検証できるようにする。
+       ビルドのみに使われ、実行時には影響しない -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

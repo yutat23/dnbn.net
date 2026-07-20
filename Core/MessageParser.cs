@@ -161,7 +161,7 @@ public class MessageParser
       var headerLen = _fixedHeaderLength.Value;
       if (_buffer.Count >= headerLen)
       {
-        var bodyLength = ExtractLengthFromSpan(CollectionsMarshal.AsSpan(_buffer).Slice(0, headerLen), _lengthFieldOffset.Value, _lengthFieldLength.Value);
+        var bodyLength = ExtractLengthFromSpan(GetBufferSpan(0, headerLen), _lengthFieldOffset.Value, _lengthFieldLength.Value);
         if (bodyLength > int.MaxValue - headerLen)
         {
           throw new InvalidOperationException(
@@ -182,7 +182,7 @@ public class MessageParser
       var minLen = _lengthFieldOffset.Value + _lengthFieldLength.Value;
       if (_buffer.Count >= minLen)
       {
-        var span = CollectionsMarshal.AsSpan(_buffer).Slice(_lengthFieldOffset.Value, _lengthFieldLength.Value);
+        var span = GetBufferSpan(_lengthFieldOffset.Value, _lengthFieldLength.Value);
         var totalLength = ExtractLengthFromSpan(span);
 
         // 宣言された全長が長さフィールド領域より小さい場合、0バイト抽出の無限ループや
@@ -247,6 +247,18 @@ public class MessageParser
     return _terminatorBytes.Any(candidate =>
         candidate.Length > matchedTerminator.Length &&
         candidate.AsSpan(0, matchedTerminator.Length).SequenceEqual(matchedTerminator));
+  }
+
+  private ReadOnlySpan<byte> GetBufferSpan(int offset, int count)
+  {
+#if NETSTANDARD2_0
+    // CollectionsMarshal.AsSpanは.NET 5以降のみ。長さフィールド周辺の小領域のみコピーする
+    var copy = new byte[count];
+    _buffer.CopyTo(offset, copy, 0, count);
+    return copy;
+#else
+    return CollectionsMarshal.AsSpan(_buffer).Slice(offset, count);
+#endif
   }
 
   private byte[] ExtractAndRemoveFromBuffer(int count)

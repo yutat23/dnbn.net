@@ -61,12 +61,17 @@ public interface ITcpClient : IDisposable
   /// ハンドラ未登録時のオーバーヘッドはほぼゼロ。
   /// </summary>
   event EventHandler<MessageTraceEvent>? OnMessageTrace
+#if NETSTANDARD2_0
+  // netstandard2.0 はインターフェイスの既定実装を利用できないため、実装側で定義が必要
+  ;
+#else
   {
     // 既存の独自 ITcpClient 実装を壊さないための既定実装。
     // TcpClient はこのイベントを独自に実装して実際のトレースを発行する。
     add { }
     remove { }
   }
+#endif
 
   /// <summary>
   /// メッセージ受信のObservable

@@ -56,7 +56,24 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
     cancellationToken.ThrowIfCancellationRequested();
 
     _tcpClient = new System.Net.Sockets.TcpClient();
+#if NETSTANDARD2_0
+    // CancellationToken付きConnectAsyncは.NET 5以降のみ。
+    // キャンセル時はソケットを閉じて接続試行を中断させる
+    var connectingClient = _tcpClient;
+    using (cancellationToken.Register(() => connectingClient.Close()))
+    {
+      try
+      {
+        await connectingClient.ConnectAsync(_host, _port);
+      }
+      catch (Exception) when (cancellationToken.IsCancellationRequested)
+      {
+        throw new OperationCanceledException(cancellationToken);
+      }
+    }
+#else
     await _tcpClient.ConnectAsync(_host, _port, cancellationToken);
+#endif
     TcpKeepAliveHelper.Apply(_tcpClient.Client, _tcpKeepAlive);
     _stream = _tcpClient.GetStream();
   }
@@ -71,7 +88,12 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
 
     if (_stream != null)
     {
+#if NETSTANDARD2_0
+      _stream.Dispose();
+      await Task.CompletedTask;
+#else
       await _stream.DisposeAsync();
+#endif
       _stream = null;
     }
 
@@ -93,7 +115,7 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    await _stream.WriteAsync(data, cancellationToken);
+    await _stream.WriteAsync(data, 0, data.Length, cancellationToken);
     await _stream.FlushAsync(cancellationToken);
   }
 

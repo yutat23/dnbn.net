@@ -1,4 +1,4 @@
-namespace TcpMessenger.Sample;
+namespace Dnbn.Sample;
 
 /// <summary>
 /// シナリオの進行を見やすく表示するためのコンソール出力ヘルパー

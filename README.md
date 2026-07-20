@@ -1,12 +1,22 @@
 # dnbn.net
 
 ![language](https://img.shields.io/badge/language-C%23-green?logo=csharp)
-![dotnet](https://img.shields.io/badge/dotnet-8.0-blue?logo=dotnet)
+![dotnet](https://img.shields.io/badge/dotnet-8.0%20%7C%20netstandard2.0-blue?logo=dotnet)
 [![NuGet version](https://img.shields.io/nuget/v/dnbn.net)](https://www.nuget.org/packages/dnbn.net/)
 
 TCP の独自電文を .NET から扱うためのメッセージ送受信ライブラリです。
 
 終端文字、固定長、長さフィールド付き可変長のようなレガシー寄りの TCP プロトコルを、サーバー/クライアントの両方で扱えます。
+
+## 対応フレームワーク
+
+| ターゲット | 対応ランタイム |
+|---|---|
+| `net8.0` | .NET 8 以降 |
+| `netstandard2.0` | .NET Framework 4.6.2 以降(4.7.2 以降を推奨)など |
+
+※ `dnbn.net.WebUI`(Web UI パッケージ)は ASP.NET Core を使用するため .NET 8 以降専用です。
+※ TCP レベル KeepAlive の詳細パラメータ(`TcpKeepAlive` の Time/Interval/RetryCount)は、.NET Framework では Windows 10 1709 以降で有効です(未対応環境では SO_KEEPALIVE の有効化のみ行われます)。
 
 ## 主な機能
 
@@ -301,13 +311,13 @@ await webUI.StartAsync();
 サンプルプロジェクトには、機能ごとの実行シナリオがあります。
 
 ```bash
-dotnet run --project Samples/TcpMessenger.Sample
+dotnet run --project Samples/Dnbn.Sample
 ```
 
 番号を指定して直接実行することもできます。
 
 ```bash
-dotnet run --project Samples/TcpMessenger.Sample -- 1
+dotnet run --project Samples/Dnbn.Sample -- 1
 ```
 
 | # | 内容 |
@@ -321,7 +331,16 @@ dotnet run --project Samples/TcpMessenger.Sample -- 1
 | 7 | フィルター、統計情報、メッセージ履歴・送信を含む Web UI |
 | 8 | appsettings.json と DI の対話プレイグラウンド |
 
-詳細は [Samples/TcpMessenger.Sample/README.md](./Samples/TcpMessenger.Sample/README.md) を参照してください。
+詳細は [Samples/Dnbn.Sample/README.md](./Samples/Dnbn.Sample/README.md) を参照してください。
+
+### .NET Framework から使う
+
+.NET Framework 4.8 のコンソールアプリから利用するサンプルは [Samples/Dnbn.Sample.NetFramework](./Samples/Dnbn.Sample.NetFramework/) にあります(C# 7.3 の範囲で記述。Windows で `dotnet run` または Visual Studio から実行)。
+
+```bash
+cd Samples/Dnbn.Sample.NetFramework
+dotnet run
+```
 
 ## ログ
 

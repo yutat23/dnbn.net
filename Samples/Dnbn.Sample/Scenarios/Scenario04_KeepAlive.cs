@@ -3,7 +3,7 @@ using Dnbn.Core;
 using Microsoft.Extensions.Logging;
 using TcpClient = Dnbn.Core.TcpClient;
 
-namespace TcpMessenger.Sample.Scenarios;
+namespace Dnbn.Sample.Scenarios;
 
 /// <summary>
 /// シナリオ4: KeepAliveと死活監視

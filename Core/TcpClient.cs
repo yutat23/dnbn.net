@@ -4,6 +4,9 @@ using Dnbn.Configuration;
 using Dnbn.Filters;
 using Dnbn.Models;
 using Microsoft.Extensions.Logging;
+#if NETSTANDARD2_0
+using TaskCompletionSource = Dnbn.Core.TaskCompletionSourceCompat;
+#endif
 
 namespace Dnbn.Core;
 

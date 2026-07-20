@@ -53,7 +53,7 @@ internal sealed class SafeObservable<T> : IObservable<T>, IDisposable
 
   public IDisposable Subscribe(IObserver<T> observer)
   {
-    ArgumentNullException.ThrowIfNull(observer);
+    if (observer is null) throw new ArgumentNullException(nameof(observer));
     lock (_sync)
     {
       if (_disposed)

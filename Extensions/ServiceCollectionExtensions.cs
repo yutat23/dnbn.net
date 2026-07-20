@@ -107,7 +107,7 @@ public static class ServiceCollectionExtensions
       IEnumerable<ClientConfig> clients,
       bool connectOnHostStart = true)
   {
-    ArgumentNullException.ThrowIfNull(clients);
+    if (clients is null) throw new ArgumentNullException(nameof(clients));
     var configs = clients.Select(client => client.Clone()).ToList();
     var root = new TcpMessengerConfig { Clients = configs };
     TcpMessengerConfigValidator.Validate(root);

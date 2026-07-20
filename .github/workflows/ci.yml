@@ -24,6 +24,8 @@ jobs:
         run: dotnet build dnbn.net.sln --configuration Release --no-restore
       - name: Test
         run: dotnet test Tests/Dnbn.Tests/Dnbn.Tests.csproj --configuration Release --no-build --no-restore
+      - name: Test (netstandard2.0 build)
+        run: dotnet test Tests/Dnbn.Tests.NetStandard/Dnbn.Tests.NetStandard.csproj --configuration Release --no-build --no-restore
       - name: Pack
         run: |
           dotnet pack dnbn.net.csproj --configuration Release --no-build --output artifacts

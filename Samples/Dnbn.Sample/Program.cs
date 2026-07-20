@@ -1,8 +1,8 @@
 using System.Text;
 using Microsoft.Extensions.Logging;
-using TcpMessenger.Sample.Scenarios;
+using Dnbn.Sample.Scenarios;
 
-namespace TcpMessenger.Sample;
+namespace Dnbn.Sample;
 
 /// <summary>
 /// dnbn.net サンプル集のエントリポイント。

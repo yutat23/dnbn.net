@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.0
+
+- `netstandard2.0`ターゲットを追加し、.NET Framework 4.6.2以降（4.7.2以降を推奨）から利用可能に
+- netstandard2.0ビルドを既存テスト一式で検証するテストプロジェクト`Dnbn.Tests.NetStandard`をCIに追加
+- .NET Framework 4.8のサンプルプロジェクト`Samples/Dnbn.Sample.NetFramework`を追加（C# 7.3の範囲で記述）
+- サンプルプロジェクトを旧ブランド名の`TcpMessenger.Sample`から`Dnbn.Sample`へリネーム
+
+### Compatibility
+
+- net8.0ターゲットの公開API・動作は変更なし
+- netstandard2.0では、`ITcpClient.OnMessageTrace`と`ITcpServer.OnMessageReceivedAsync`に既定実装がないため（インターフェイスの既定実装が利用不可）、これらのインターフェイスを独自実装する場合は両イベントの実装が必要
+- TCPレベルKeepAliveの詳細パラメータ（Time/Interval/RetryCount）は、.NET FrameworkではWindows 10 1709以降で有効（未対応環境ではSO_KEEPALIVEの有効化のみ）
+- `dnbn.net.WebUI`は引き続き.NET 8以降専用
+
 ## 1.5.1
 
 - 送信フィルターの実行中にtimeout/cancelされた要求が後からwire送信される競合を修正

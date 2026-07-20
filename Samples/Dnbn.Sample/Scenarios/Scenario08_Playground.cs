@@ -5,7 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace TcpMessenger.Sample.Scenarios;
+namespace Dnbn.Sample.Scenarios;
 
 /// <summary>
 /// シナリオ8: 対話プレイグラウンド

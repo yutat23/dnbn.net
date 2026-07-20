@@ -14,7 +14,7 @@ public static class TcpMessengerConfigValidator
   /// <summary>ルート設定を検証する。</summary>
   public static void Validate(TcpMessengerConfig config)
   {
-    ArgumentNullException.ThrowIfNull(config);
+    if (config is null) throw new ArgumentNullException(nameof(config));
     ValidateUniqueNames(config.Servers.Select(server => server.Name), "server");
     ValidateUniqueNames(config.Clients.Select(client => client.Name), "client");
     foreach (var server in config.Servers) ValidateServer(server);
@@ -24,7 +24,7 @@ public static class TcpMessengerConfigValidator
   /// <summary>サーバー設定を検証する。</summary>
   public static void ValidateServer(ServerConfig config)
   {
-    ArgumentNullException.ThrowIfNull(config);
+    if (config is null) throw new ArgumentNullException(nameof(config));
     ValidateName(config.Name, "server");
     ValidatePort(config.ListenPort, nameof(config.ListenPort), config.Name);
     if (!IPAddress.TryParse(config.BindAddress, out _))
@@ -44,7 +44,7 @@ public static class TcpMessengerConfigValidator
   /// <summary>クライアント設定を検証する。</summary>
   public static void ValidateClient(ClientConfig config)
   {
-    ArgumentNullException.ThrowIfNull(config);
+    if (config is null) throw new ArgumentNullException(nameof(config));
     ValidateName(config.Name, "client");
     if (string.IsNullOrWhiteSpace(config.RemoteHost))
       throw new InvalidOperationException($"Client '{config.Name}' RemoteHost is required.");

@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    netstandard2.0 ビルドの検証用テストプロジェクト。
+    ライブラリを netstandard2.0 として参照することで、ポリフィルや #if NETSTANDARD2_0 の
+    コードパスを net8.0 ランタイム上で Dnbn.Tests と同じテスト一式に通す。
+    （WebUI は net8.0 専用のため WebUIServiceTests は対象外）
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>Dnbn.Tests.NetStandard</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <!-- netstandard2.0 ビルドの依存パッケージ。
+       SetTargetFramework 経由の参照では restore に伝播しないため明示的に参照する -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+    <!-- Dnbn.Testsでは他のプロジェクト参照から流入する、テストコード自体が使うパッケージ -->
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\dnbn.net.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Dnbn.Tests\**\*.cs"
+             Exclude="..\Dnbn.Tests\WebUIServiceTests.cs;..\Dnbn.Tests\bin\**;..\Dnbn.Tests\obj\**" />
+  </ItemGroup>
+
+</Project>
