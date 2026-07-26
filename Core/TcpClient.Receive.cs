@@ -296,7 +296,7 @@ partial class TcpClient
         return false;
       }
 
-      await DisconnectCoreAsync(isIntentional, CancellationToken.None).ConfigureAwait(false);
+      await DisconnectCoreAsync(isIntentional).ConfigureAwait(false);
       return true;
     }
     finally

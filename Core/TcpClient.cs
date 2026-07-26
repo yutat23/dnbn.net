@@ -489,7 +489,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
   /// サーバーから切断
   /// </summary>
   /// <param name="isIntentional">意図的な切断かどうか</param>
-  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <param name="cancellationToken">切断処理を開始する前のキャンセルに使用するトークン。後片付けの開始後は中断しない</param>
   public async Task DisconnectAsync(bool isIntentional = true, CancellationToken cancellationToken = default)
   {
     cancellationToken.ThrowIfCancellationRequested();
@@ -532,7 +532,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     await _disconnectLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
     try
     {
-      await DisconnectCoreAsync(isIntentional, cancellationToken).ConfigureAwait(false);
+      await DisconnectCoreAsync(isIntentional).ConfigureAwait(false);
     }
     finally
     {
@@ -540,7 +540,7 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     }
   }
 
-  private async Task DisconnectCoreAsync(bool isIntentional, CancellationToken cancellationToken)
+  private async Task DisconnectCoreAsync(bool isIntentional)
   {
     var wasConnected = IsConnected;
     _isIntentionalDisconnect = isIntentional;
@@ -558,10 +558,10 @@ public partial class TcpClient : ITcpClient, IAsyncDisposable
     // 残存して新しい接続に干渉することがなくなる
     await WaitForLoopTasksAsync().ConfigureAwait(false);
 
-    if (wasConnected)
-    {
-      await _transport.DisconnectAsync(cancellationToken).ConfigureAwait(false);
-    }
+    // IsConnected=false は、接続失敗やI/Oエラー検出後にリソースが解放済みであることを
+    // 意味しない。論理的な切断では接続状態にかかわらずトランスポートを片付ける。
+    // 後始末を途中で中断して半端な状態を残さないよう、利用者のトークンは渡さない。
+    await _transport.DisconnectAsync(CancellationToken.None).ConfigureAwait(false);
 
     // 接続時刻をクリア（統計情報は保持）
     lock (_statsLock)

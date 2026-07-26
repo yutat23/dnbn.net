@@ -201,6 +201,8 @@ public class TcpClientLifecycleTests
     await reconnectedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     Assert.True(client.IsConnected);
+    Assert.True(mock.DisconnectCalls >= 1,
+        "0-byte receiveによる論理切断では、再接続前にトランスポートをクリーンアップする必要がある");
 
     // 再接続後に送受信が機能すること
     var sendTask = client.SendAsync(Message.FromString("after_reconnect", Encoding.UTF8), TimeSpan.FromSeconds(3));
@@ -238,6 +240,8 @@ public class TcpClientLifecycleTests
     // 自動再接続により復帰すること
     await reconnectedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
     Assert.True(client.IsConnected);
+    Assert.True(transport.DisconnectCalls >= 1,
+        "IsConnected=falseの障害経路でもトランスポートをクリーンアップする必要がある");
 
     // 復帰後に送受信が機能すること
     var sendTask = client.SendAsync(Message.FromString("recovered", Encoding.UTF8), TimeSpan.FromSeconds(3));
@@ -364,5 +368,18 @@ public class TcpClientLifecycleTests
     await client.DisconnectAsync();
 
     Assert.False(client.IsConnected);
+    Assert.Equal(1, transport.DisconnectCalls);
+  }
+
+  [Fact]
+  public async Task DisconnectAsync_UsesNonCancelableTokenForTransportCleanup()
+  {
+    var transport = new MockTransport();
+    await using var client = new TcpClient(CreateConfig(), transport);
+    using var cts = new CancellationTokenSource();
+
+    await client.DisconnectAsync(cancellationToken: cts.Token);
+
+    Assert.False(transport.LastDisconnectTokenCanBeCanceled);
   }
 }

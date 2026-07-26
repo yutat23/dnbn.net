@@ -38,7 +38,7 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
   }
 
   /// <summary>
-  /// 接続状態
+  /// 接続状態。最後のI/O時点のスナップショットであり、現在の接続生存性を保証しない
   /// </summary>
   public bool IsConnected => _tcpClient?.Connected ?? false;
 
@@ -46,6 +46,7 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
   /// サーバーに接続
   /// </summary>
   /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <remarks>接続済みと判定された場合は何もしない。強制的に再接続する場合は、先に<see cref="DisconnectAsync"/>を呼ぶこと</remarks>
   public async Task ConnectAsync(CancellationToken cancellationToken = default)
   {
     if (IsConnected)
@@ -55,27 +56,45 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    _tcpClient = new System.Net.Sockets.TcpClient();
-#if NETSTANDARD2_0
-    // CancellationToken付きConnectAsyncは.NET 5以降のみ。
-    // キャンセル時はソケットを閉じて接続試行を中断させる
-    var connectingClient = _tcpClient;
-    using (cancellationToken.Register(() => connectingClient.Close()))
+    // Connected=false は「解放済み」を意味しない。接続失敗やI/Oエラー検出後の
+    // ソケット/ストリームが残っている場合があるため、新しい接続で上書きする前に
+    // 必ず既存リソースを破棄する。
+    await DisconnectAsync(CancellationToken.None).ConfigureAwait(false);
+
+    var tcpClient = new System.Net.Sockets.TcpClient();
+    try
     {
-      try
+#if NETSTANDARD2_0
+      // CancellationToken付きConnectAsyncは.NET 5以降のみ。
+      // キャンセル時はソケットを閉じて接続試行を中断させる
+      using (cancellationToken.Register(() => tcpClient.Close()))
       {
-        await connectingClient.ConnectAsync(_host, _port);
+        try
+        {
+          await tcpClient.ConnectAsync(_host, _port).ConfigureAwait(false);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+          throw new OperationCanceledException(cancellationToken);
+        }
       }
-      catch (Exception) when (cancellationToken.IsCancellationRequested)
-      {
-        throw new OperationCanceledException(cancellationToken);
-      }
-    }
 #else
-    await _tcpClient.ConnectAsync(_host, _port, cancellationToken);
+      await tcpClient.ConnectAsync(_host, _port, cancellationToken).ConfigureAwait(false);
 #endif
-    TcpKeepAliveHelper.Apply(_tcpClient.Client, _tcpKeepAlive);
-    _stream = _tcpClient.GetStream();
+      TcpKeepAliveHelper.Apply(tcpClient.Client, _tcpKeepAlive);
+      var stream = tcpClient.GetStream();
+
+      // 接続と初期化がすべて成功してからフィールドへ公開する。
+      _stream = stream;
+      _tcpClient = tcpClient;
+    }
+    catch
+    {
+      // 接続失敗・キャンセル・KeepAlive設定失敗のいずれでも、
+      // 作成したソケットをファイナライザ任せにしない。
+      tcpClient.Dispose();
+      throw;
+    }
   }
 
   /// <summary>
@@ -154,4 +173,3 @@ public class TcpTransport : ITransport, IDisposable, IAsyncDisposable
     DisconnectAsync().ConfigureAwait(false).GetAwaiter().GetResult();
   }
 }
-

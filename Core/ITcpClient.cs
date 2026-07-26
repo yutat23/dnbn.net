@@ -81,7 +81,7 @@ public interface ITcpClient : IDisposable
   /// <summary>
   /// 接続する
   /// </summary>
-  /// <param name="cancellationToken">キャンセレーショントークン</param>
+  /// <param name="cancellationToken">切断処理を開始する前のキャンセルに使用するトークン。後片付けの開始後は中断しない</param>
   Task ConnectAsync(CancellationToken cancellationToken = default);
 
   /// <summary>

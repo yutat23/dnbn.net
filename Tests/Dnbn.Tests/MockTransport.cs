@@ -16,9 +16,17 @@ internal class MockTransport : ITransport
   private byte[]? _responseOnNextSend;
   private bool _dropAfterNextConnect;
   private int _connectCalls;
+  private int _disconnectCalls;
+  private int _lastDisconnectTokenCanBeCanceled;
 
   /// <summary>ConnectAsync が呼ばれた回数</summary>
   public int ConnectCalls => Volatile.Read(ref _connectCalls);
+
+  /// <summary>DisconnectAsync が呼ばれた回数</summary>
+  public int DisconnectCalls => Volatile.Read(ref _disconnectCalls);
+
+  /// <summary>最後のDisconnectAsyncにキャンセル可能なトークンが渡されたか</summary>
+  public bool LastDisconnectTokenCanBeCanceled => Volatile.Read(ref _lastDisconnectTokenCanBeCanceled) != 0;
 
   /// <summary>
   /// 次の ConnectAsync 成功直後に IsConnected を false にする（1回だけ）。
@@ -80,6 +88,8 @@ internal class MockTransport : ITransport
   /// <inheritdoc />
   public Task DisconnectAsync(CancellationToken cancellationToken = default)
   {
+    Interlocked.Increment(ref _disconnectCalls);
+    Volatile.Write(ref _lastDisconnectTokenCanBeCanceled, cancellationToken.CanBeCanceled ? 1 : 0);
     _connected = false;
     // チャンネルを完了させて ReceiveAsync を 0 バイトで終了させる
     _receiveChannel.Writer.TryComplete();
@@ -137,7 +147,8 @@ internal class MockTransport : ITransport
   /// <summary>切断をシミュレート（0バイト受信で ReceiveLoop に通知）</summary>
   public void SimulateDisconnect()
   {
-    _connected = false;
+    // 実ソケットでは正常なFINによる0バイト受信後もConnected=trueのままになるため、
+    // ReceiveAsyncが0を返すことだけで切断を通知する。
     _receiveChannel.Writer.TryComplete();
   }
 }
