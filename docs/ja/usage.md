@@ -1,8 +1,8 @@
-# Usage examples
+# 利用例
 
-English | [日本語](./ja/usage.md)
+[English](../usage.md) | 日本語
 
-## Use directly without DI
+## DIなしで直接使う
 
 ```csharp
 using Dnbn.Configuration;
@@ -39,7 +39,7 @@ await client.ConnectAsync();
 var response = await client.SendAsync("PING");
 ```
 
-## Use with DI
+## DIで使う
 
 ```csharp
 var services = new ServiceCollection();
@@ -53,9 +53,9 @@ var server = factory.CreateServer("MainServer");
 var client = factory.CreateClient("MainClient");
 ```
 
-### Tie configured clients to the host
+### 設定済みクライアントをホストと連動させる
 
-In ASP.NET Core / Generic Host, you can register configured clients as keyed singletons and connect on start / disconnect on stop. Add this after the existing `AddDnbnNet` call.
+ASP.NET Core / Generic Hostでは、設定済みクライアントをkeyed singletonとして登録し、起動時の接続と停止時の切断を自動化できます。既存の `AddDnbnNet` の後に追加します。
 
 ```csharp
 services.AddDnbnNet(configuration);
@@ -64,18 +64,19 @@ services.AddDnbnNetHostedClients(configuration);
 var client = serviceProvider.GetRequiredKeyedService<ITcpClient>("MainClient");
 ```
 
-Inject `IDnbnClientRegistry` when you need a list (`IDnbnClientCollection` remains available for compatibility). Each name has a single instance, and the keyed service and registry return the same instance.
+一覧が必要な処理では `IDnbnClientRegistry` を注入できます（`IDnbnClientCollection`も互換性のため利用可能）。クライアントは名前ごとに単一インスタンスで、keyed serviceとregistryから同じインスタンスが返ります。
 
-You can also register typed configs assembled at startup, for example from a database.
+DBなどから起動時に組み立てた型付き設定も登録できます。
 
 ```csharp
 services.AddDnbnNet(new TcpMessengerConfig());
 services.AddDnbnNetHostedClients(dynamicClientConfigs);
 ```
 
-To use the named registry without automatic connect, pass `connectOnHostStart: false`.
+自動接続を行わず名前付きregistryだけを使う場合は、
+`connectOnHostStart: false` を指定できます。
 
-To wait for a connection when sending while disconnected, set the following on the client. The default is `false`, so existing code still throws immediately.
+未接続時の送信を接続待ちにしたい場合は、対象クライアントに次を設定します。既定値は `false` のため、既存コードの即時例外動作は変わりません。
 
 ```json
 {
@@ -84,9 +85,9 @@ To wait for a connection when sending while disconnected, set the following on t
 }
 ```
 
-## Receive push notifications
+## プッシュ通知を受ける
 
-Notifications that arrive from the server at arbitrary times, rather than as a `SendAsync` response, are received on `OnMessageReceived`.
+`SendAsync` の応答ではなく、サーバーから任意タイミングで届く通知は `OnMessageReceived` で受けます。
 
 ```csharp
 client.OnMessageReceived += (_, message) =>
@@ -95,14 +96,14 @@ client.OnMessageReceived += (_, message) =>
 };
 ```
 
-To exclude notification messages from response matching, set `NotificationPredicate`.
+通知電文を応答マッチングから除外したい場合は `NotificationPredicate` を設定します。
 
 ```csharp
 client.NotificationPredicate = message =>
     message.Text?.StartsWith("EVENT:") == true;
 ```
 
-## Wait for a matching response
+## 条件付きで応答を待つ
 
 ```csharp
 var response = await client.SendAndWaitAsync(
@@ -111,15 +112,15 @@ var response = await client.SendAndWaitAsync(
     TimeSpan.FromSeconds(3));
 ```
 
-## Send without waiting for a response
+## 応答を待たずに送る
 
 ```csharp
 await client.SendOneWayAsync("NOTIFY");
 ```
 
-Always use this for commands that do not return a response. It does not consume response-wait timeouts or `MaxConcurrentResponseWaits` slots.
+応答しないコマンドには必ずこちらを使います。応答待ちtimeoutや`MaxConcurrentResponseWaits`の枠は使用しません。
 
-## Use FIFO response correlation safely
+## FIFO応答相関を安全に使う
 
 ```json
 {
@@ -130,15 +131,15 @@ Always use this for commands that do not return a response. It does not consume 
 }
 ```
 
-If a request that has already been written times out or is canceled, the client reconnects so a late response cannot be matched to a later request. `KeepConnection` is for backward compatibility and logs a warning when used after a wire write has started.
+送信済み要求がtimeout/cancelになると、遅延応答を後続要求へ誤対応させないため接続を再確立します。`KeepConnection`は後方互換用で、wire書き込み開始後に未完了になった場合は警告ログが出ます。
 
-## Broadcast
+## ブロードキャスト
 
 ```csharp
 await server.BroadcastAsync("SERVER_MAINTENANCE");
 ```
 
-## Inspect connection state
+## 接続状態を見る
 
 ```csharp
 var info = client.ConnectionInfo;

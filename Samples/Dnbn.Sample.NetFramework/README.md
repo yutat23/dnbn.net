@@ -1,30 +1,32 @@
 # Dnbn.Sample.NetFramework
 
-.NET Framework 4.8 のコンソールアプリから dnbn.net（`netstandard2.0` ビルド）を使うサンプルです。
+English | [日本語](./README.ja.md)
 
-エコーサーバーとクライアントを同一プロセスで起動し、次の流れを実演します。
+A sample that uses dnbn.net (the `netstandard2.0` build) from a .NET Framework 4.8 console app.
 
-1. `TcpServer` の起動と `OnMessageReceivedAsync` によるエコー応答
-2. `TcpClient` の接続(`ConnectionRetryPolicy` による自動再接続設定付き)
-3. `SendAsync` によるリクエスト/レスポンス
-4. サーバープッシュ電文の受信(`OnMessageReceived`)
-5. アプリケーションレベル KeepAlive(2秒間隔の PING と応答観測)
+It starts an echo server and a client in the same process and demonstrates the following:
 
-コードは C# 7.3(.NET Framework プロジェクトの既定コンパイラ設定)の範囲で書かれているため、既存のレガシープロジェクトへそのまま持ち込めます。`await using` が使えないため、後片付けは `DisconnectAsync`/`StopAsync` の後に `Dispose` を呼ぶ形になります。
+1. Starting `TcpServer` and echoing with `OnMessageReceivedAsync`
+2. Connecting `TcpClient` (with automatic reconnect via `ConnectionRetryPolicy`)
+3. Request/response with `SendAsync`
+4. Receiving a server-push message (`OnMessageReceived`)
+5. Application-level KeepAlive (PING every 2 seconds, with response observation)
 
-## 実行方法(Windows)
+The code stays within C# 7.3 (the default compiler setting for .NET Framework projects), so you can take it into an existing legacy project. `await using` is unavailable, so cleanup calls `Dispose` after `DisconnectAsync` / `StopAsync`.
+
+## How to run (Windows)
 
 ```bash
 cd Samples/Dnbn.Sample.NetFramework
 dotnet run
 ```
 
-Visual Studio からは `Dnbn.Sample.NetFramework` をスタートアッププロジェクトに設定して実行してください。
+From Visual Studio, set `Dnbn.Sample.NetFramework` as the startup project.
 
-Windows 以外の OS ではビルド(コンパイル検証)のみ可能です(`Microsoft.NETFramework.ReferenceAssemblies` パッケージ利用)。
+On non-Windows OS, only build (compile verification) is supported, using the `Microsoft.NETFramework.ReferenceAssemblies` package.
 
-## 自分のプロジェクトで使う場合
+## Using it in your own project
 
-- SDK スタイル / PackageReference 形式のプロジェクトで `dotnet add package dnbn.net` を実行してください(net461 以降なら `netstandard2.0` ビルドが自動選択されます。4.7.2 以降を推奨)。
-- 旧形式(packages.config)のプロジェクトの場合は、PackageReference 形式への移行を推奨します。
-- 依存パッケージのバージョン差異解決のため、`AutoGenerateBindingRedirects` を有効にしてください(本サンプルの csproj を参照)。
+- In an SDK-style / PackageReference project, run `dotnet add package dnbn.net` (the `netstandard2.0` build is selected automatically for net461 or later; 4.7.2 or later is recommended).
+- For old-style (packages.config) projects, migrate to PackageReference.
+- Enable `AutoGenerateBindingRedirects` to resolve version differences among dependent packages (see this sample's csproj).

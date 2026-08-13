@@ -1,10 +1,12 @@
-# API概要
+# API overview
 
-詳細なシグネチャはコード上の XML コメントも参照してください。ここでは利用時に触る主要APIだけをまとめます。
+English | [日本語](./ja/api-reference.md)
+
+See XML comments in the code for full signatures. This page covers the main APIs you touch at use time.
 
 ## ITcpMessengerFactory
 
-DIで `AddDnbnNet` を使う場合の入口です。
+Entry point when using `AddDnbnNet` with DI.
 
 ```csharp
 var factory = provider.GetRequiredService<ITcpMessengerFactory>();
@@ -12,69 +14,82 @@ var server = factory.CreateServer("MainServer");
 var client = factory.CreateClient("MainClient");
 ```
 
-型付き設定から生成する場合は`ITypedTcpMessengerFactory`を使用します。既存の`ITcpMessengerFactory`実装との互換性を保つためinterfaceを分離しています。
+To create endpoints from typed config objects, use `ITypedTcpMessengerFactory`. The interface is separate so existing `ITcpMessengerFactory` implementations stay compatible.
+
+```csharp
+var typed = provider.GetRequiredService<ITypedTcpMessengerFactory>();
+var client = typed.CreateClient(clientConfig);
+```
 
 ## ITcpServer
 
-主なメンバー:
+Main members:
 
-| メンバー | 説明 |
+| Member | Description |
 |---|---|
-| `StartAsync()` | サーバーを起動 |
-| `StopAsync()` | サーバーを停止 |
-| `SendAsync(sessionId, message)` | 特定セッションへ送信 |
-| `BroadcastAsync(message)` | 全セッションへ送信 |
-| `GetSession(sessionId)` | セッション取得 |
-| `GetAllSessions()` | 全セッション取得 |
-| `ConnectionInfo` | 接続状態と統計 |
-| `OnMessageReceived` | メッセージ受信イベント |
-| `OnMessageReceivedAsync` | セッション内の順序を保ってawaitされる非同期ハンドラ |
-| `OnClientConnected` | クライアント接続イベント |
-| `OnClientDisconnected` | クライアント切断イベント |
-| `OnError` | エラーイベント |
+| `StartAsync()` | Start the server |
+| `StopAsync()` | Stop the server |
+| `SendAsync(sessionId, message)` | Send to a specific session |
+| `BroadcastAsync(message)` | Send to all sessions |
+| `GetSession(sessionId)` | Get a session |
+| `GetAllSessions()` | Get all sessions |
+| `ConnectionInfo` | Connection state and statistics |
+| `OnMessageReceived` | Message received event |
+| `OnMessageReceivedAsync` | Async handler awaited in session receive order |
+| `OnClientConnected` | Client connected event |
+| `OnClientDisconnected` | Client disconnected event |
+| `OnError` | Error event |
 | `MessageReceived` | Rx Observable |
+
+The concrete `TcpServer` also implements `IAsyncDisposable`. `OnMessageReceivedAsync` has no default interface implementation on `netstandard2.0`, so custom `ITcpServer` implementations on that target must define the event.
 
 ## ITcpClient
 
-主なメンバー:
+Main members:
 
-| メンバー | 説明 |
+| Member | Description |
 |---|---|
-| `ConnectAsync()` | 接続 |
-| `DisconnectAsync()` | 切断 |
-| `SendAsync(message)` | 送信して応答を待つ |
-| `SendAndWaitAsync(message, predicate, timeout)` | 条件に合う応答を待つ |
-| `SendOneWayAsync(message)` | 応答を待たずに送信 |
-| `WaitForConnectionAsync(timeout)` | 接続完了を待つ |
-| `InterruptReconnectDelay()` | 再接続の待機を中断 |
-| `NotificationPredicate` | 通知電文の判定 |
-| `KeepAlive` | KeepAlive設定の取得/変更 |
-| `TimeoutMilliseconds` | 既定タイムアウトの取得/変更 |
-| `RetryPolicy` | メッセージ送信リトライ設定 |
-| `ConnectionRetryPolicy` | 接続リトライ設定 |
-| `ConnectionInfo` | 接続状態と統計 |
-| `State` | 詳細な接続状態（`ConnectionState`） |
-| `OnMessageReceived` | プッシュ通知受信イベント |
-| `OnKeepAliveResponseReceived` | KeepAlive応答イベント |
-| `OnConnectionStateChanged` | 接続状態変化イベント |
-| `OnMessageTrace` | 要求・応答・通知・KeepAliveを含む全送受信の診断イベント |
+| `ConnectAsync()` | Connect |
+| `DisconnectAsync()` | Disconnect |
+| `SendAsync(message)` | Send and wait for a response |
+| `SendAndWaitAsync(message, predicate, timeout)` | Wait for a matching response |
+| `SendOneWayAsync(message)` | Send without waiting for a response |
+| `WaitForConnectionAsync(timeout)` | Wait until connected |
+| `InterruptReconnectDelay()` | Skip the current reconnect backoff wait |
+| `NotificationPredicate` | Predicate for notification messages |
+| `KeepAlive` | Get/set KeepAlive config |
+| `TimeoutMilliseconds` | Get/set the default timeout |
+| `RetryPolicy` | Message send retry policy |
+| `ConnectionRetryPolicy` | Connection retry policy |
+| `ConnectionInfo` | Connection state and statistics, including `IsReconnecting` and `KeepAliveTimeoutCount` |
+| `State` | Detailed connection state (`ConnectionState`) |
+| `OnConnected` | Connected event |
+| `OnDisconnected` | Disconnected event |
+| `OnError` | Error event |
+| `OnMessageReceived` | Push notification received event |
+| `OnKeepAliveResponseReceived` | KeepAlive response event |
+| `OnConnectionStateChanged` | Connection state change event |
+| `OnMessageTrace` | Diagnostic event for all send/receive, including requests, responses, notifications, and KeepAlive |
+| `MessageReceived` | Rx Observable |
 
-`SendAsync` / `SendAndWaitAsync`は応答必須、`SendOneWayAsync`は応答なしの契約です。`MaxConcurrentResponseWaits`は前者だけを制限します。
+`SendAsync` / `SendAndWaitAsync` require a response. `SendOneWayAsync` does not. `MaxConcurrentResponseWaits` limits only the former.
+
+The concrete `TcpClient` also implements `IAsyncDisposable`. `OnMessageTrace` has no default interface implementation on `netstandard2.0`, so custom `ITcpClient` implementations on that target must define the event.
 
 ## IDnbnClientRegistry
 
-Generic Hostと連動する名前付きクライアントを単一インスタンスとして取得します。設定ファイル由来と型付き動的設定の両方を登録できます。
+Resolves named clients that participate in Generic Host as a single instance per name. You can register both config-file clients and typed dynamic configs.
 
 ### ConnectionState
 
-`State` プロパティと `OnConnectionStateChanged` イベントで、`OnConnected` / `OnDisconnected` だけでは分からない「自動再接続中かどうか」を観測できます。
+`State` and `OnConnectionStateChanged` let you observe auto-reconnect, which `OnConnected` / `OnDisconnected` alone cannot show.
 
-| 値 | 意味 |
+| Value | Meaning |
 |---|---|
-| `Disconnected` | 未接続（初期状態、意図的な切断後、再接続の断念後） |
-| `Connecting` | `ConnectAsync` による接続試行中（リトライ待機中を含む） |
-| `Connected` | 接続済み |
-| `Reconnecting` | NW障害後の自動再接続中（リトライ待機中を含む） |
+| `Disconnected` | Not connected (initial, after an intentional disconnect, or after giving up reconnect) |
+| `Connecting` | Connecting via `ConnectAsync` (including retry waits) |
+| `Connected` | Connected |
+| `Reconnecting` | Auto-reconnecting after a network failure (including retry waits) |
 
 ```csharp
 client.OnConnectionStateChanged += (_, e) =>
@@ -85,7 +100,7 @@ client.OnConnectionStateChanged += (_, e) =>
 
 ### MessageTrace
 
-`OnMessageTrace` は、`OnMessageReceived` には流れない `SendAsync` の応答やKeepAliveも観測します。送信方向の `RawData` / `Text` は終端文字を含む実送信内容です。イベントの `Message` は診断用スナップショットなので、変更しても実際の送受信処理には影響しません。
+`OnMessageTrace` also observes `SendAsync` responses and KeepAlive, which do not flow into `OnMessageReceived`. Outbound `RawData` / `Text` include the terminator actually written to the wire. `Message` on the event is a diagnostic snapshot; mutating it does not affect send/receive.
 
 ```csharp
 client.OnMessageTrace += (_, trace) =>
@@ -96,15 +111,15 @@ client.OnMessageTrace += (_, trace) =>
 
 ## Message
 
-| プロパティ | 説明 |
+| Property | Description |
 |---|---|
-| `RawData` | 受信/送信バイト列 |
-| `Text` | エンコーディング変換後の文字列 |
-| `Code` | アプリ側で使えるメッセージコード |
-| `Timestamp` | メッセージ生成時刻 |
-| `Metadata` | フィルターなどが使う追加情報 |
+| `RawData` | Received or sent bytes |
+| `Text` | String after encoding conversion |
+| `Code` | Message code for application use |
+| `Timestamp` | Message creation time |
+| `Metadata` | Extra data used by filters and similar |
 
-作成ヘルパー:
+Creation helpers:
 
 ```csharp
 var message = Message.FromString("HELLO", Encoding.UTF8);
@@ -113,7 +128,7 @@ var binary = Message.FromBytes(bytes, Encoding.UTF8);
 
 ## IMessageFilter
 
-送信前/受信後にメッセージを加工できます。チェックサム付与、検証、ログ、プロトコル固有の変換に使います。
+You can transform messages before send and after receive. Use this for checksums, validation, logging, or protocol-specific conversion.
 
 ```csharp
 public interface IMessageFilter
@@ -121,4 +136,17 @@ public interface IMessageFilter
     Task<Message> OnSendingAsync(Message msg, IMessageContext ctx);
     Task<Message> OnReceivedAsync(Message msg, IMessageContext ctx);
 }
+```
+
+Pass filters to the constructor, or register `IMessageFilter` implementations in DI. `TcpMessengerFactory` receives them as `IEnumerable<IMessageFilter>` and applies them to every server and client it creates.
+
+```csharp
+await using var client = new TcpClient(
+    clientConfig,
+    transport,
+    logger,
+    filters: new[] { new MyFilter() });
+
+services.AddSingleton<IMessageFilter, MyFilter>();
+services.AddDnbnNet(configuration);
 ```

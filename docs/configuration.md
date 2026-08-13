@@ -1,6 +1,8 @@
-# 設定リファレンス
+# Configuration reference
 
-`appsettings.json` では `dnbn.net` セクションを使います。`TcpMessenger` セクションも後方互換性のために読み込まれますが、新しいコードでは `dnbn.net` を使ってください。
+English | [日本語](./ja/configuration.md)
+
+`appsettings.json` uses the `dnbn.net` section. The `TcpMessenger` section is still loaded for backward compatibility. New code should use `dnbn.net`.
 
 ```json
 {
@@ -14,11 +16,11 @@
 }
 ```
 
-## フル設定サンプル
+## Full configuration sample
 
-JSON/XML設定で指定できるすべてのプロパティを記載したサンプルです。各プロパティの意味は後続のリファレンスを参照してください。
+This sample lists every property that can be set from JSON (or XML configuration binding). See the tables below for what each property means.
 
-メッセージの区切り方式は「終端文字方式」（`MessageTerminator` / `ReceiveMessageTerminator`）と「固定長/長さフィールド方式」（`FixedHeaderLength` / `FixedBodyLength` / `LengthFieldOffset` / `LengthFieldLength`）のどちらか一方を使います。以下では前者を `TerminatorServer` / `TerminatorClient`、後者を `LengthFieldServer` / `LengthFieldClient` として示します。
+Use either terminator framing (`MessageTerminator` / `ReceiveMessageTerminator`) or length-based framing (`FixedHeaderLength` / `FixedBodyLength` / `LengthFieldOffset` / `LengthFieldLength`). The sample uses `TerminatorServer` / `TerminatorClient` for the former and `LengthFieldServer` / `LengthFieldClient` for the latter.
 
 ```json
 {
@@ -124,100 +126,100 @@ JSON/XML設定で指定できるすべてのプロパティを記載したサン
 }
 ```
 
-`ClientConfig.NotificationPredicate` と `KeepAliveConfig.ResponsePredicate` はコード専用のプロパティのため、このサンプルには含まれていません。
+`ClientConfig.NotificationPredicate` and `KeepAliveConfig.ResponsePredicate` are code-only properties, so they are not included in this sample.
 
 ## ServerConfig
 
-`dnbn.net.Servers` に設定します。`Name` は `ITcpMessengerFactory.CreateServer(name)` で使う識別子です。
+Set under `dnbn.net.Servers`. `Name` is the identifier used by `ITcpMessengerFactory.CreateServer(name)`.
 
-| プロパティ | 型 | 既定値 | 説明 |
+| Property | Type | Default | Description |
 |---|---:|---:|---|
-| `Name` | `string` | `""` | サーバー名 |
-| `ListenPort` | `int` | `0` | 待ち受けポート |
-| `BindAddress` | `string` | `"0.0.0.0"` | 待ち受けIPアドレス |
-| `Encoding` | `string` | `"UTF-8"` | 文字エンコーディング |
-| `MessageTerminator` | `string?` | `null` | 送信時、および受信時の既定終端文字 |
-| `ReceiveMessageTerminator` | `string[]?` | `null` | 受信時の終端文字候補 |
-| `ClientIdentification` | `ClientIdentification` | `SourceEndpoint` | クライアント識別方式。v1.5では`SourceEndpoint`のみ対応し、`HeaderBased`は起動時エラー |
-| `FixedHeaderLength` | `int?` | `null` | 固定長/長さフィールド方式のヘッダ長 |
-| `FixedBodyLength` | `int?` | `null` | 固定長方式のボディ長 |
-| `LengthFieldOffset` | `int?` | `null` | ヘッダ内の長さフィールド開始位置 |
-| `LengthFieldLength` | `int?` | `null` | 長さフィールドのバイト数 |
-| `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ（`true`: Information、`false`: Debug レベルで出力） |
-| `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。指定時は1以上 |
-| `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCPレベルのキープアライブ設定（接続を受け付けたクライアントソケットに適用） |
+| `Name` | `string` | `""` | Server name |
+| `ListenPort` | `int` | `0` | Listen port |
+| `BindAddress` | `string` | `"0.0.0.0"` | Listen IP address |
+| `Encoding` | `string` | `"UTF-8"` | Character encoding |
+| `MessageTerminator` | `string?` | `null` | Default terminator for send, and for receive when receive candidates are unset |
+| `ReceiveMessageTerminator` | `string[]?` | `null` | Terminator candidates on receive |
+| `ClientIdentification` | `ClientIdentification` | `SourceEndpoint` | Client identification. Only `SourceEndpoint` is implemented. `HeaderBased` fails validation |
+| `FixedHeaderLength` | `int?` | `null` | Header length for fixed-length or length-prefixed framing |
+| `FixedBodyLength` | `int?` | `null` | Body length for fixed-length framing |
+| `LengthFieldOffset` | `int?` | `null` | Start offset of the length field in the header |
+| `LengthFieldLength` | `int?` | `null` | Length field size in bytes. Must be 1, 2, or 4 |
+| `EnableMessageLogging` | `bool` | `false` | Message send/receive logging (`true`: Information, `false`: Debug) |
+| `MaxReceiveBufferBytes` | `int?` | `null` | Receive buffer cap. When set, must be 1 or greater |
+| `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCP-level keep-alive (applied to accepted client sockets) |
 
 ## ClientConfig
 
-`dnbn.net.Clients` に設定します。`Name` は `ITcpMessengerFactory.CreateClient(name)` で使う識別子です。
+Set under `dnbn.net.Clients`. `Name` is the identifier used by `ITcpMessengerFactory.CreateClient(name)`.
 
-| プロパティ | 型 | 既定値 | 説明 |
+| Property | Type | Default | Description |
 |---|---:|---:|---|
-| `Name` | `string` | `""` | クライアント名 |
-| `RemoteHost` | `string` | `""` | 接続先ホスト |
-| `RemotePort` | `int` | `0` | 接続先ポート |
-| `Encoding` | `string` | `"UTF-8"` | 文字エンコーディング |
-| `MessageTerminator` | `string?` | `null` | 送信時、および受信時の既定終端文字 |
-| `ReceiveMessageTerminator` | `string[]?` | `null` | 受信時の終端文字候補 |
-| `RetryPolicy` | `RetryPolicy?` | `null` | メッセージ送信リトライ |
-| `ConnectionRetryPolicy` | `RetryPolicy?` | `null` | 接続失敗/切断時の再接続リトライ |
-| `TimeoutMilliseconds` | `int` | `5000` | `SendAsync` の既定タイムアウト |
-| `SendQueueCapacity` | `int` | `1000` | 送信キューの最大サイズ。満杯時は送信呼び出しが空き待ちになる |
-| `MaxConcurrentResponseWaits` | `int?` | `null` | 同時に応答待ちにできる要求数。`SendOneWayAsync`は対象外。nullは従来どおり無制限 |
-| `IncompleteRequestRecovery` | `IncompleteRequestRecovery` | `KeepConnection` | wire書き込み開始後のtimeout/cancel時の回復方法。`Reconnect`を推奨 |
-| `WaitForConnectionOnSend` | `bool` | `false` | 未接続時の送信で接続確立を待つ。既定値では従来どおり即座に `InvalidOperationException` |
-| `WaitForConnectionTimeoutMilliseconds` | `int` | `10000` | 接続待ち送信の最大待機時間。タイムアウト時は `TimeoutException` |
-| `KeepAlive` | `KeepAliveConfig?` | `null` | KeepAlive設定（アプリケーションレベル：電文送信による死活監視） |
-| `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCPレベルのキープアライブ設定 |
-| `FixedHeaderLength` | `int?` | `null` | 固定長/長さフィールド方式のヘッダ長 |
-| `FixedBodyLength` | `int?` | `null` | 固定長方式のボディ長 |
-| `LengthFieldOffset` | `int?` | `null` | ヘッダ内の長さフィールド開始位置 |
-| `LengthFieldLength` | `int?` | `null` | 長さフィールドのバイト数 |
-| `EnableMessageLogging` | `bool` | `false` | メッセージ送受信ログ（`true`: Information、`false`: Debug レベルで出力） |
-| `MaxReceiveBufferBytes` | `int?` | `null` | 受信バッファ上限。指定時は1以上 |
+| `Name` | `string` | `""` | Client name |
+| `RemoteHost` | `string` | `""` | Remote host |
+| `RemotePort` | `int` | `0` | Remote port |
+| `Encoding` | `string` | `"UTF-8"` | Character encoding |
+| `MessageTerminator` | `string?` | `null` | Default terminator for send, and for receive when receive candidates are unset |
+| `ReceiveMessageTerminator` | `string[]?` | `null` | Terminator candidates on receive |
+| `RetryPolicy` | `RetryPolicy?` | `null` | Message send retry |
+| `ConnectionRetryPolicy` | `RetryPolicy?` | `null` | Reconnect retry on connect failure or disconnect |
+| `TimeoutMilliseconds` | `int` | `5000` | Default timeout for `SendAsync` |
+| `SendQueueCapacity` | `int` | `1000` | Max send-queue size. When full, send calls wait for a slot |
+| `MaxConcurrentResponseWaits` | `int?` | `null` | Max in-flight response waits. `SendOneWayAsync` is excluded. `null` means unlimited |
+| `IncompleteRequestRecovery` | `IncompleteRequestRecovery` | `KeepConnection` | Recovery after timeout/cancel once wire write has started. Prefer `Reconnect` |
+| `WaitForConnectionOnSend` | `bool` | `false` | Wait for a connection when sending while disconnected. Default throws `InvalidOperationException` immediately |
+| `WaitForConnectionTimeoutMilliseconds` | `int` | `10000` | Max wait for connection-on-send. Times out with `TimeoutException` |
+| `KeepAlive` | `KeepAliveConfig?` | `null` | Application-level KeepAlive (liveness via sending a message) |
+| `TcpKeepAlive` | `TcpKeepAliveConfig?` | `null` | TCP-level keep-alive |
+| `FixedHeaderLength` | `int?` | `null` | Header length for fixed-length or length-prefixed framing |
+| `FixedBodyLength` | `int?` | `null` | Body length for fixed-length framing |
+| `LengthFieldOffset` | `int?` | `null` | Start offset of the length field in the header |
+| `LengthFieldLength` | `int?` | `null` | Length field size in bytes. Must be 1, 2, or 4 |
+| `EnableMessageLogging` | `bool` | `false` | Message send/receive logging (`true`: Information, `false`: Debug) |
+| `MaxReceiveBufferBytes` | `int?` | `null` | Receive buffer cap. When set, must be 1 or greater |
 
-`NotificationPredicate` はコードから設定するプロパティです。JSON/XML設定には含められません。
+`NotificationPredicate` is set from code. It cannot be included in JSON/XML configuration.
 
-`SendAsync` / `SendAndWaitAsync` は応答必須、`SendOneWayAsync` は応答なしの契約です。FIFO以外の相関IDを持たないプロトコルでは、同時応答待ちを1件に制限し、送信済み要求が未完了になった接続を再確立することで遅延応答の誤相関を防ぎます。`Reconnect`時の接続待ち送信には`WaitForConnectionOnSend`も有効にしてください。
+`SendAsync` / `SendAndWaitAsync` require a response. `SendOneWayAsync` does not. For protocols without a correlation ID other than FIFO, limit concurrent response waits to 1 and reconnect when an in-flight request becomes incomplete, so a late response cannot be matched to a later request. When using `Reconnect`, also enable `WaitForConnectionOnSend` if sends should wait for the new connection.
 
 ## RetryPolicy
 
-| プロパティ | 型 | 既定値 | 説明 |
+| Property | Type | Default | Description |
 |---|---:|---:|---|
-| `MaxRetryCount` | `int` | `3` | 最大リトライ回数。接続リトライでは `-1` で無限リトライ |
-| `RetryDelayStrategy` | `RetryDelayStrategy` | `Exponential` | `Fixed` または `Exponential` |
-| `InitialDelayMs` | `int` | `500` | 初期待機時間 |
-| `MaxDelayMs` | `int` | `60000` | 最大待機時間 |
-| `FailOnTimeout` | `bool` | `true` | タイムアウトを失敗として扱う |
-| `FailOnErrorResponse` | `bool` | `true` | エラー応答を失敗として扱う |
+| `MaxRetryCount` | `int` | `3` | Max retry count. For connection retry, `-1` means unlimited |
+| `RetryDelayStrategy` | `RetryDelayStrategy` | `Exponential` | `Fixed` or `Exponential` |
+| `InitialDelayMs` | `int` | `500` | Initial delay |
+| `MaxDelayMs` | `int` | `60000` | Maximum delay |
+| `FailOnTimeout` | `bool` | `true` | Treat timeout as failure |
+| `FailOnErrorResponse` | `bool` | `true` | Treat error responses as failure |
 
-`RetryPolicy`を設定すると要求電文が再送されます。二重実行できないコマンドには設定しないでください。接続確立の再試行だけが必要な場合は`ConnectionRetryPolicy`を使用します。
+Setting `RetryPolicy` resends the request message. Do not set it for commands that must not run twice. Use `ConnectionRetryPolicy` when you only need to retry establishing a connection.
 
 ## KeepAliveConfig
 
-| プロパティ | 型 | 既定値 | 説明 |
+| Property | Type | Default | Description |
 |---|---:|---:|---|
-| `Enabled` | `bool` | `false` | KeepAliveを有効にする |
-| `IntervalSeconds` | `int` | `30` | 送信間隔（応答タイムアウトも同じ値） |
-| `Message` | `string` | `""` | 送信するKeepAliveメッセージ |
-| `DisconnectOnTimeout` | `bool` | `true` | 応答タイムアウト時に切断する。NW障害扱いとなり、`ConnectionRetryPolicy` 設定時は自動再接続する |
+| `Enabled` | `bool` | `false` | Enable KeepAlive |
+| `IntervalSeconds` | `int` | `30` | Send interval (response timeout uses the same value) |
+| `Message` | `string` | `""` | KeepAlive message to send |
+| `DisconnectOnTimeout` | `bool` | `true` | Disconnect on response timeout. Treated as a network failure, so `ConnectionRetryPolicy` triggers auto-reconnect when set |
 
-`ResponsePredicate` はコードから設定するプロパティです。JSON/XML設定には含められません。
+`ResponsePredicate` is set from code. It cannot be included in JSON/XML configuration.
 
-KeepAliveの応答は通常要求と同じFIFO順で相関され、通常要求が応答待ちの間はKeepAlive送信自体が延期されます。`DisconnectOnTimeout` の既定値は `true` です。応答がない接続はFIFO相関を信頼できないため切断し、遅延したKeepAlive応答が後続の通常要求へ誤配されるのを防ぎます。従来どおり接続を維持する必要がある場合だけ `false` を明示してください。
+KeepAlive responses are correlated in the same FIFO order as normal requests. KeepAlive sends themselves are deferred while a normal request is waiting for a response. `DisconnectOnTimeout` defaults to `true`. A connection with no KeepAlive response cannot be trusted for FIFO correlation, so the client disconnects to prevent a late KeepAlive response from being delivered to a later normal request. Set `false` only when you must keep the connection.
 
 ## TcpKeepAliveConfig
 
-OSのTCPスタックが行うキープアライブ（ソケットオプション `SO_KEEPALIVE`）の設定です。無通信状態が続いてもNW障害・タイムアウトによる切断をOSレベルで検知できるようになり、`SendAsync` 時に初めてエラーになるのを防ぎやすくなります。電文を送信する `KeepAliveConfig`（アプリケーションレベル）とは独立しており、併用もできます。
+This configures OS TCP keep-alive (socket option `SO_KEEPALIVE`). It helps the OS detect network failures or idle timeouts even when the application is not sending data, so the first error is less likely to appear only on the next `SendAsync`. It is independent of `KeepAliveConfig` (application-level messages) and can be used together with it.
 
-| プロパティ | 型 | 既定値 | 説明 |
+| Property | Type | Default | Description |
 |---|---:|---:|---|
-| `Enabled` | `bool` | `false` | TCPキープアライブを有効にする |
-| `TimeSeconds` | `int` | `60` | 無通信状態から最初のプローブ送信までの時間（秒） |
-| `IntervalSeconds` | `int` | `10` | プローブの再送間隔（秒） |
-| `RetryCount` | `int` | `5` | 接続断と判定するまでのプローブ再送回数 |
+| `Enabled` | `bool` | `false` | Enable TCP keep-alive |
+| `TimeSeconds` | `int` | `60` | Idle time before the first probe (seconds) |
+| `IntervalSeconds` | `int` | `10` | Probe retry interval (seconds) |
+| `RetryCount` | `int` | `5` | Probe retries before the connection is considered dead |
 
-未設定（`null`）の場合は従来どおりOSの既定動作です。`TimeSeconds` / `IntervalSeconds` / `RetryCount` の細かい制御がOSでサポートされていない環境では、基本のキープアライブ有効化のみが行われます。
+When unset (`null`), the OS default applies. On environments that do not support fine-grained `TimeSeconds` / `IntervalSeconds` / `RetryCount` control, only the basic keep-alive option is enabled. On .NET Framework, those detailed parameters work on Windows 10 1709 or later.
 
 ```json
 {
@@ -241,20 +243,20 @@ OSのTCPスタックが行うキープアライブ（ソケットオプション
 
 ## WebUIConfig
 
-Web UI は `dnbn.net.WebUI` パッケージ側で使います。
+Web UI settings are consumed by the `dnbn.net.WebUI` package.
 
-| プロパティ | 型 | 既定値 | 説明 |
+| Property | Type | Default | Description |
 |---|---:|---:|---|
-| `Enabled` | `bool` | `false` | Web UIを有効にする |
-| `Port` | `int` | `8080` | HTTPポート |
-| `UpdateIntervalSeconds` | `int` | `1` | SSE更新間隔 |
-| `BindAddress` | `string` | `"localhost"` | バインドアドレス。`"*"` で全アドレス |
-| `EnableLogging` | `bool` | `true` | Web UIログ |
-| `EventTimelineCapacity` | `int` | `200` | 接続・切断・状態遷移・エラー履歴の最大件数 |
-| `EnableMessageHistory` | `bool` | `false` | 送受信メッセージ履歴を有効にする。ペイロードを扱うため既定OFF |
-| `MessageHistoryCapacity` | `int` | `200` | メッセージ履歴の最大件数 |
-| `MessageHistoryMaxPayloadBytes` | `int` | `512` | 履歴1件に保持するペイロードの最大バイト数 |
-| `AllowSendFromUI` | `bool` | `false` | Web UIからの送信を有効にする。既定OFF |
-| `SendAuthToken` | `string?` | `null` | 送信APIが `X-Dnbn-Send-Token` に要求するトークン |
+| `Enabled` | `bool` | `false` | Enable the Web UI |
+| `Port` | `int` | `8080` | HTTP port |
+| `UpdateIntervalSeconds` | `int` | `1` | SSE update interval |
+| `BindAddress` | `string` | `"localhost"` | Bind address. `"*"` binds all addresses |
+| `EnableLogging` | `bool` | `true` | Web UI logging |
+| `EventTimelineCapacity` | `int` | `200` | Max connection/disconnect/state/error history entries |
+| `EnableMessageHistory` | `bool` | `false` | Enable send/receive message history. Off by default because it stores payloads |
+| `MessageHistoryCapacity` | `int` | `200` | Max message history entries |
+| `MessageHistoryMaxPayloadBytes` | `int` | `512` | Max payload bytes kept per history entry |
+| `AllowSendFromUI` | `bool` | `false` | Allow sending from the Web UI. Off by default |
+| `SendAuthToken` | `string?` | `null` | Token required on `X-Dnbn-Send-Token` for the send API |
 
-`EventTimelineCapacity` とメッセージ履歴の各上限はリングバッファとして機能し、上限を超えると古い項目から破棄されます。`AllowSendFromUI` を有効にする場合は `SendAuthToken` を設定し、Web UIのポートを信頼できるネットワークだけに公開してください。
+`EventTimelineCapacity` and the message-history limits are ring buffers. Older items are dropped when the cap is exceeded. If you enable `AllowSendFromUI`, set `SendAuthToken` and expose the Web UI port only on a trusted network.

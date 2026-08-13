@@ -1,42 +1,44 @@
 # Dnbn.Sample
 
-dnbn.net（TCPメッセージ送受信ライブラリ）の機能を**シナリオ別に実演する**サンプル集です。
-1シナリオ＝1ファイルで自己完結しており、コードはそのままコピーして使える形になっています。
+English | [日本語](./README.ja.md)
 
-## 実行方法
+A set of **scenario-based demos** for dnbn.net (a TCP messaging library).
+Each scenario is self-contained in one file, in a form you can copy into your own code.
+
+## How to run
 
 ```bash
-# メニューから選択
+# Choose from the menu
 dotnet run --project Samples/Dnbn.Sample
 
-# シナリオ番号を直接指定（例: シナリオ3）
+# Run a scenario by number (example: scenario 3)
 dotnet run --project Samples/Dnbn.Sample -- 3
 ```
 
-シナリオ1〜6は人の操作なしで自動実行されます。7はWeb UI確認のためEnter入力で終了、8は対話モードです。
+Scenarios 1 through 6 run without interaction. Scenario 7 waits for Enter so you can inspect the Web UI. Scenario 8 is interactive.
 
-## シナリオ一覧
+## Scenarios
 
-| # | シナリオ | 実演する機能 |
+| # | Scenario | What it demonstrates |
 |---|---|---|
-| 1 | クイックスタート | 最小構成のサーバー/クライアント、`SendAsync`によるリクエスト/レスポンス |
-| 2 | チャット／ブロードキャスト | 複数セッション管理、`BroadcastAsync`、`OnMessageReceived`（プッシュ受信）、Rx購読 |
-| 3 | 障害と自動再接続 | `ConnectionRetryPolicy`（無限リトライ）、`IsReconnecting`監視、`InterruptReconnectDelay`、`WaitForConnectionAsync` |
-| 4 | KeepAliveと死活監視 | `KeepAliveConfig`、`ResponsePredicate`による応答判定、`KeepAliveTimeoutCount`での無応答検出 |
-| 5 | レガシープロトコル | 終端文字方式＋Shift-JIS、固定長方式、長さフィールド方式のフレーミング |
-| 6 | リクエスト制御 | タイムアウト、`RetryPolicy`による自動再送、`SendAndWaitAsync`の述語マッチング、通知電文（`NotificationPredicate`／`SendOneWayAsync`）、FIFOパイプライン |
-| 7 | 運用監視 | `IMessageFilter`（チェックサム付与/検証）、`ConnectionInfo`統計、Web UIダッシュボード |
-| 8 | 対話プレイグラウンド | appsettings.json＋DI（`AddDnbnNet`）構成、実行時の設定変更（KeepAlive/タイムアウト） |
+| 1 | Quick start | Minimal server/client and request/response with `SendAsync` |
+| 2 | Chat / broadcast | Multi-session management, `BroadcastAsync`, `OnMessageReceived` (push), Rx subscription |
+| 3 | Failures and automatic reconnect | Unlimited `ConnectionRetryPolicy`, `ConnectionInfo.IsReconnecting`, `InterruptReconnectDelay`, `WaitForConnectionAsync` |
+| 4 | KeepAlive and liveness | `KeepAliveConfig`, response matching with `ResponsePredicate`, no-response detection via `KeepAliveTimeoutCount` |
+| 5 | Legacy protocols | Terminator framing with Shift-JIS, fixed-length framing, length-prefixed framing |
+| 6 | Request control | Timeout, automatic resend with `RetryPolicy`, predicate matching with `SendAndWaitAsync`, notifications (`NotificationPredicate` / `SendOneWayAsync`), FIFO pipeline |
+| 7 | Operations monitoring | `IMessageFilter` (checksum attach/verify), `ConnectionInfo` statistics, Web UI dashboard with message history and send |
+| 8 | Interactive playground | appsettings.json + DI (`AddDnbnNet`), runtime changes to KeepAlive/timeout |
 
-## 構成ファイル
+## Configuration files
 
-- `appsettings.json` — シナリオ8（プレイグラウンド）で使用するDI構成の例
-- それ以外のシナリオは設定をコード内に直接記述しています（コピーして使いやすくするため）
+- `appsettings.json` — DI configuration example used by scenario 8 (playground)
+- Other scenarios set configuration in code so they are easier to copy
 
-## 受信経路の使い分け（重要）
+## Receive paths (important)
 
-dnbn.net のクライアントには受信メッセージの経路が3つあります。サンプル全体を通して、この使い分けを意識して読んでください。
+The client has three receive paths. Read the samples with this split in mind.
 
-1. **`SendAsync` の戻り値** — 自分が送ったリクエストへの応答（`OnMessageReceived`は発火しない）
-2. **`OnMessageReceived` / `MessageReceived`(Rx)** — リクエストと無関係にサーバーから届くプッシュ通知
-3. **`OnKeepAliveResponseReceived`** — KeepAliveメッセージへの応答（`ResponsePredicate`で判定）
+1. **Return value of `SendAsync`** — response to a request you sent (`OnMessageReceived` does not fire)
+2. **`OnMessageReceived` / `MessageReceived` (Rx)** — push notifications from the server, unrelated to a request
+3. **`OnKeepAliveResponseReceived`** — response to a KeepAlive message (matched with `ResponsePredicate`)

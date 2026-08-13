@@ -1,12 +1,13 @@
 # dnbn.net Docs
 
-詳しい使い方は以下を参照してください。
+English | [日本語](./ja/index.md)
 
-- [設定リファレンス](./configuration.md)
-- [メッセージプロトコル](./protocols.md)
-- [API概要](./api-reference.md)
-- [利用例](./usage.md)
+See the following pages for details.
+
+- [Configuration reference](./configuration.md)
+- [Message protocols](./protocols.md)
+- [API overview](./api-reference.md)
+- [Usage examples](./usage.md)
 - [Web UI](./web-ui.md)
-- [ログ](./logging.md)
-- [トラブルシューティング](./troubleshooting.md)
-
+- [Logging](./logging.md)
+- [Troubleshooting](./troubleshooting.md)

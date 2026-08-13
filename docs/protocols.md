@@ -1,10 +1,14 @@
-# メッセージプロトコル
+# Message protocols
 
-TCP はバイトストリームなので、受信したデータをどこで1メッセージとして切るかを設定する必要があります。
+English | [日本語](./ja/protocols.md)
 
-## 終端文字方式
+TCP is a byte stream, so you must configure where one message ends and the next begins.
 
-テキスト系プロトコル向けです。
+Terminator-based framing, or length-based framing (fixed-length or length-prefixed), is required. If neither is set, endpoint creation fails validation.
+
+## Terminator framing
+
+For text-oriented protocols.
 
 ```json
 {
@@ -12,7 +16,7 @@ TCP はバイトストリームなので、受信したデータをどこで1メ
 }
 ```
 
-受信時だけ複数の終端候補を扱う場合は `ReceiveMessageTerminator` を使います。
+To accept multiple terminator candidates on receive only, use `ReceiveMessageTerminator`.
 
 ```json
 {
@@ -21,12 +25,12 @@ TCP はバイトストリームなので、受信したデータをどこで1メ
 }
 ```
 
-CRとCRLFのように、短い候補が長い候補の先頭と重なる場合は最長一致を優先します。
-TCPチャンクが短い候補の直後で終わった場合、次の1バイトで長い候補かどうかが確定するまで受信通知を保留します。
+When a shorter candidate is a prefix of a longer one, such as CR and CRLF, longest match wins.
+If a TCP chunk ends immediately after the shorter candidate, the parser holds the receive notification until the next byte confirms whether the longer candidate matches.
 
-## 固定長方式
+## Fixed-length framing
 
-ヘッダ長とボディ長が固定のプロトコル向けです。
+For protocols with a fixed header length and body length.
 
 ```json
 {
@@ -35,11 +39,11 @@ TCPチャンクが短い候補の直後で終わった場合、次の1バイト�
 }
 ```
 
-この例では合計24バイトを1メッセージとして扱います。
+This example treats 24 bytes as one message.
 
-## 長さフィールド付き可変長方式
+## Length-prefixed variable-length framing
 
-ヘッダ内の長さフィールドでボディ長を表すプロトコル向けです。
+For protocols that encode the body length in a header length field.
 
 ```json
 {
@@ -49,14 +53,18 @@ TCPチャンクが短い候補の直後で終わった場合、次の1バイト�
 }
 ```
 
-`LengthFieldOffset` はヘッダ先頭からのバイト位置です。`LengthFieldLength` は 1、2、4 バイトを想定しています。
+`LengthFieldOffset` is the byte offset from the start of the header. `LengthFieldLength` must be 1, 2, or 4.
 
-## バッファ上限
+You cannot combine terminator framing with length-based framing. You also cannot combine `FixedBodyLength` with a length field.
 
-終端文字または長さフィールドの設定は必須です。どちらもない場合はendpoint生成時に設定エラーになります。`MaxReceiveBufferBytes`は、終端未到着や不正な宣言長に対する追加のメモリ上限として設定してください。
+## Buffer limit
+
+`MaxReceiveBufferBytes` is an extra memory cap against a missing terminator or an invalid declared length.
 
 ```json
 {
   "MaxReceiveBufferBytes": 65536
 }
 ```
+
+When set, the value must be greater than zero. `null` means unlimited.

@@ -1,62 +1,64 @@
 # Changelog
 
+English | [日本語](./CHANGELOG.ja.md)
+
 ## 1.6.1
 
-- 接続失敗を繰り返す再接続で、試行ごとにソケットが破棄されず残るリソースリークを修正
-- 接続失敗・キャンセル・TCP KeepAlive設定失敗・ストリーム取得失敗時に、生成済みソケットを即時破棄するよう修正
-- 論理的な切断時は`IsConnected`の値にかかわらずトランスポートをクリーンアップ
+- Fixed a resource leak where sockets were not disposed on each attempt during repeated reconnect failures
+- Dispose created sockets immediately on connect failure, cancellation, TCP KeepAlive configuration failure, or stream acquisition failure
+- Clean up the transport on logical disconnect regardless of `IsConnected`
 
 ### Compatibility
 
-- 論理的な切断では未接続状態でも`ITransport.DisconnectAsync`を呼ぶ。独自トランスポート実装は、未接続・切断済み状態からの呼び出しを安全に処理する必要がある
-- 切断処理の開始後は、リソースと内部状態を確実にクリーンアップするため利用者の`CancellationToken`では中断しない
+- Logical disconnect now calls `ITransport.DisconnectAsync` even when not connected. Custom transport implementations must handle calls from a disconnected or already-disconnected state safely
+- After disconnect cleanup starts, the caller's `CancellationToken` does not abort it, so resources and internal state are always cleaned up
 
 ## 1.6.0
 
-- `netstandard2.0`ターゲットを追加し、.NET Framework 4.6.2以降（4.7.2以降を推奨）から利用可能に
-- netstandard2.0ビルドを既存テスト一式で検証するテストプロジェクト`Dnbn.Tests.NetStandard`をCIに追加
-- .NET Framework 4.8のサンプルプロジェクト`Samples/Dnbn.Sample.NetFramework`を追加（C# 7.3の範囲で記述）
-- サンプルプロジェクトを旧ブランド名の`TcpMessenger.Sample`から`Dnbn.Sample`へリネーム
+- Added a `netstandard2.0` target so the library can be used from .NET Framework 4.6.2 or later (4.7.2 or later recommended)
+- Added `Dnbn.Tests.NetStandard` to CI to run the existing test suite against the netstandard2.0 build
+- Added `Samples/Dnbn.Sample.NetFramework`, a .NET Framework 4.8 sample written within C# 7.3
+- Renamed the sample project from the old brand `TcpMessenger.Sample` to `Dnbn.Sample`
 
 ### Compatibility
 
-- net8.0ターゲットの公開API・動作は変更なし
-- netstandard2.0では、`ITcpClient.OnMessageTrace`と`ITcpServer.OnMessageReceivedAsync`に既定実装がないため（インターフェイスの既定実装が利用不可）、これらのインターフェイスを独自実装する場合は両イベントの実装が必要
-- TCPレベルKeepAliveの詳細パラメータ（Time/Interval/RetryCount）は、.NET FrameworkではWindows 10 1709以降で有効（未対応環境ではSO_KEEPALIVEの有効化のみ）
-- `dnbn.net.WebUI`は引き続き.NET 8以降専用
+- Public API and behavior of the net8.0 target are unchanged
+- On netstandard2.0, `ITcpClient.OnMessageTrace` and `ITcpServer.OnMessageReceivedAsync` have no default implementations (interface default implementations are unavailable). Custom implementations of these interfaces must define both events
+- Detailed TCP-level KeepAlive parameters (Time/Interval/RetryCount) work on .NET Framework on Windows 10 1709 or later. On unsupported environments, only `SO_KEEPALIVE` is enabled
+- `dnbn.net.WebUI` remains .NET 8 or later only
 
 ## 1.5.1
 
-- 送信フィルターの実行中にtimeout/cancelされた要求が後からwire送信される競合を修正
-- 指数バックオフを上限値へ飽和させ、長時間の無限再接続で`int`オーバーフローしないよう修正
-- `ConnectAsync` / `StartAsync`のCancellationTokenを接続・起動操作の期間だけ使用するよう修正
-- `OnMessageReceivedAsync`内から`StopAsync`を呼んだ場合の自己待機デッドロックを修正
-- prefixが重なる終端文字候補をTCPチャンク境界でも最長一致で解析
-- Microsoft.Extensions依存を8.0系の修正版へ更新し、既知の脆弱な推移的依存を解消
-- CI/publishのrestoreをNuGet脆弱性監査付きにし、監査警告をリリース失敗として扱う
+- Fixed a race where a request timed out or canceled during a send filter could still be written to the wire later
+- Saturate exponential backoff at the maximum delay so long unlimited reconnect loops cannot overflow `int`
+- Use the `CancellationToken` of `ConnectAsync` / `StartAsync` only for the duration of that connect or start operation
+- Fixed a self-await deadlock when `StopAsync` is called from `OnMessageReceivedAsync`
+- Parse overlapping terminator candidates with longest match even across TCP chunk boundaries
+- Updated Microsoft.Extensions dependencies to 8.0.x patch versions to remove known vulnerable transitive dependencies
+- CI/publish restore now includes a NuGet vulnerability audit, and audit warnings fail the release
 
 ### Compatibility
 
-- CRとCRLFのようにprefixが重なる終端文字を併用した場合、短い終端文字だけでバッファが終わると、次の1バイトで候補が確定するまで受信通知を保留する
-- `ConnectAsync` / `StartAsync`へ渡したCancellationTokenを完了後にcancelしても、確立済み接続・起動済みサーバーは停止しない
+- When overlapping terminators such as CR and CRLF are used together, if the buffer ends on the shorter terminator, receive notification is held until the next byte confirms the candidate
+- Canceling a `CancellationToken` passed to `ConnectAsync` / `StartAsync` after completion does not stop an established connection or a started server
 
 ## 1.5.0
 
-- 応答必須要求の同時待機数を制限する`MaxConcurrentResponseWaits`を追加
-- 送信済み要求のtimeout/cancel後に接続を回復する`IncompleteRequestRecovery`を追加
-- 送信完了と即時応答が競合しても、応答相関と診断イベントの因果順序を維持
-- 応答しない送信を`SendOneWayAsync`として明確化
-- 重複する終端文字候補を最長一致で解析
-- セッション内順序を保つ`ITcpServer.OnMessageReceivedAsync`を追加
-- イベント・Observable購読者の例外を通信ループから隔離
-- 型付き動的クライアント登録と`IDnbnClientRegistry`を追加
-- endpoint設定のfail-fast検証を追加
-- TCPサーバーのライフサイクル直列化とバックグラウンドtask追跡を改善
-- net8.0 / net10.0のテストとCI/publishゲートを追加
+- Added `MaxConcurrentResponseWaits` to limit concurrent response-required requests
+- Added `IncompleteRequestRecovery` to recover the connection after timeout/cancel of a request already written
+- Preserve causal order of response correlation and diagnostic events even when send completion races with an immediate response
+- Clarified no-response sending as `SendOneWayAsync`
+- Parse duplicate terminator candidates with longest match
+- Added `ITcpServer.OnMessageReceivedAsync`, which preserves receive order within a session
+- Isolate exceptions from event and Observable subscribers from the communication loop
+- Added typed dynamic client registration and `IDnbnClientRegistry`
+- Added fail-fast validation of endpoint configuration
+- Improved TCP server lifecycle serialization and background task tracking
+- Added net8.0 / net10.0 tests and CI/publish gates
 
 ### Compatibility
 
-- 既存の`ITcpMessengerFactory`は変更せず、型付き生成を`ITypedTcpMessengerFactory`へ分離
-- `MaxConcurrentResponseWaits`の既定値はnull（従来どおり無制限）
-- `IncompleteRequestRecovery`の既定値は`KeepConnection`（従来挙動）
-- `ClientIdentification.HeaderBased`は未実装のため、黙って無視せず設定エラーになる
+- Existing `ITcpMessengerFactory` is unchanged. Typed creation is split into `ITypedTcpMessengerFactory`
+- Default `MaxConcurrentResponseWaits` is null (unlimited, as before)
+- Default `IncompleteRequestRecovery` is `KeepConnection` (previous behavior)
+- `ClientIdentification.HeaderBased` is unimplemented and now fails configuration validation instead of being silently ignored

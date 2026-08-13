@@ -1,69 +1,71 @@
 # dnbn.net
 
+English | [日本語](./README.ja.md)
+
 ![language](https://img.shields.io/badge/language-C%23-green?logo=csharp)
 ![dotnet](https://img.shields.io/badge/dotnet-8.0%20%7C%20netstandard2.0-blue?logo=dotnet)
 [![NuGet version](https://img.shields.io/nuget/v/dnbn.net)](https://www.nuget.org/packages/dnbn.net/)
 
-TCP の独自電文を .NET から扱うためのメッセージ送受信ライブラリです。
+A .NET library for sending and receiving custom TCP message protocols.
 
-終端文字、固定長、長さフィールド付き可変長のようなレガシー寄りの TCP プロトコルを、サーバー/クライアントの両方で扱えます。
+It supports both server and client for legacy-style TCP protocols such as terminator-delimited, fixed-length, and length-prefixed variable-length messages.
 
-## 対応フレームワーク
+## Supported frameworks
 
-| ターゲット | 対応ランタイム |
+| Target | Runtime |
 |---|---|
-| `net8.0` | .NET 8 以降 |
-| `netstandard2.0` | .NET Framework 4.6.2 以降(4.7.2 以降を推奨)など |
+| `net8.0` | .NET 8 or later |
+| `netstandard2.0` | .NET Framework 4.6.2 or later (4.7.2 or later recommended), and others |
 
-※ `dnbn.net.WebUI`(Web UI パッケージ)は ASP.NET Core を使用するため .NET 8 以降専用です。
-※ TCP レベル KeepAlive の詳細パラメータ(`TcpKeepAlive` の Time/Interval/RetryCount)は、.NET Framework では Windows 10 1709 以降で有効です(未対応環境では SO_KEEPALIVE の有効化のみ行われます)。
+- `dnbn.net.WebUI` (the Web UI package) requires .NET 8 or later because it uses ASP.NET Core.
+- Detailed TCP-level KeepAlive parameters (`TcpKeepAlive` Time/Interval/RetryCount) are available on .NET Framework only on Windows 10 1709 or later. On unsupported environments, only `SO_KEEPALIVE` is enabled.
 
-## 主な機能
+## Features
 
-- TCP サーバー/クライアントの作成
-- `SendAsync` によるリクエスト/レスポンス型の送受信
-- `SendOneWayAsync` による応答を待たない送信
-- サーバーからのプッシュ受信イベント
-- `OnMessageReceived` と `IObservable` による受信購読
-- 終端文字、固定長、長さフィールド付き可変長のメッセージ分割
-- Shift-JIS など任意エンコーディングの指定
-- 接続リトライ、メッセージ送信リトライ、KeepAlive
-- 複数クライアントのセッション管理とブロードキャスト
-- メッセージフィルターパイプライン
-- 接続状態と統計情報の取得
-- `ConnectionState` と `OnConnectionStateChanged` による接続状態遷移の観測（自動再接続中の検知）
-- `OnMessageTrace` による要求・応答・通知・KeepAliveを含む送受信診断
-- Generic Host連動の名前付きクライアント登録・自動接続/切断
-- 応答待ち要求数の制限と、timeout/cancel後の安全な接続回復
-- セッション内の受信順序を保つawait可能なサーバーハンドラ
-- オプションの Web UI パッケージ
+- Create TCP servers and clients
+- Request/response messaging with `SendAsync`
+- Fire-and-forget sending with `SendOneWayAsync`
+- Push receive events from the server
+- Receive subscriptions via `OnMessageReceived` and `IObservable`
+- Message framing for terminator-delimited, fixed-length, and length-prefixed variable-length protocols
+- Arbitrary encodings such as Shift-JIS
+- Connection retry, message send retry, and KeepAlive
+- Multi-client session management and broadcast
+- Message filter pipeline
+- Connection state and statistics
+- Observe connection state transitions with `ConnectionState` and `OnConnectionStateChanged` (including auto-reconnect)
+- Send/receive diagnostics via `OnMessageTrace`, covering requests, responses, notifications, and KeepAlive
+- Named client registration with Generic Host, including automatic connect/disconnect
+- Limit in-flight response waits, with safe connection recovery after timeout or cancel
+- Awaitable server handlers that preserve receive order within a session
+- Optional Web UI package
 
-## インストール
+## Installation
 
 ```bash
 dotnet add package dnbn.net
 ```
 
-Web UI を使う場合は追加パッケージを入れます。
+To use the Web UI, add the extra package:
 
 ```bash
 dotnet add package dnbn.net.WebUI
 ```
 
-## ドキュメント
+## Documentation
 
-- [設定リファレンス](./docs/configuration.md)
-- [メッセージプロトコル](./docs/protocols.md)
-- [API概要](./docs/api-reference.md)
-- [利用例](./docs/usage.md)
+- [Configuration reference](./docs/configuration.md)
+- [Message protocols](./docs/protocols.md)
+- [API overview](./docs/api-reference.md)
+- [Usage examples](./docs/usage.md)
 - [Web UI](./docs/web-ui.md)
-- [ログ](./docs/logging.md)
-- [トラブルシューティング](./docs/troubleshooting.md)
-- [変更履歴](./CHANGELOG.md)
+- [Logging](./docs/logging.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+- [Changelog](./CHANGELOG.md)
 
-## クイックスタート
+## Quick start
 
-以下はサーバーとクライアントを同じプロセスで起動する最小例です。
+This is a minimal example that starts a server and a client in the same process.
 
 ```csharp
 using Dnbn.Configuration;
@@ -116,9 +118,9 @@ await client.DisconnectAsync();
 await server.StopAsync();
 ```
 
-## appsettings.json と DI
+## appsettings.json and DI
 
-設定ファイルから構成する場合は、`dnbn.net` セクションを使います。
+When configuring from a settings file, use the `dnbn.net` section.
 
 ```json
 {
@@ -175,15 +177,15 @@ var server = factory.CreateServer("MainServer");
 var client = factory.CreateClient("MainClient");
 ```
 
-`TcpMessenger` セクション名と `AddTcpMessenger` は後方互換性のために残っていますが、新しいコードでは `dnbn.net` と `AddDnbnNet` を使ってください。
+The `TcpMessenger` section name and `AddTcpMessenger` remain for backward compatibility. New code should use `dnbn.net` and `AddDnbnNet`.
 
-## メッセージ境界
+## Message boundaries
 
-TCP はストリームなので、電文の区切り方を設定する必要があります。
+TCP is a stream, so you must configure how messages are delimited.
 
-### 終端文字
+### Terminator
 
-テキスト系プロトコルでは `MessageTerminator` を指定します。
+For text-oriented protocols, set `MessageTerminator`.
 
 ```json
 {
@@ -191,7 +193,7 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
 }
 ```
 
-受信時だけ別の終端文字候補を使いたい場合は `ReceiveMessageTerminator` を指定できます。
+To use different terminator candidates on receive only, set `ReceiveMessageTerminator`.
 
 ```json
 {
@@ -200,9 +202,9 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
 }
 ```
 
-### 固定長
+### Fixed length
 
-ヘッダ長とボディ長が固定のプロトコルでは `FixedHeaderLength` と `FixedBodyLength` を指定します。
+For protocols with a fixed header and body length, set `FixedHeaderLength` and `FixedBodyLength`.
 
 ```json
 {
@@ -211,9 +213,9 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
 }
 ```
 
-### 長さフィールド付き可変長
+### Length-prefixed variable length
 
-ヘッダ内の長さフィールドでボディ長を表すプロトコルでは、長さフィールドの位置とサイズを指定します。
+For protocols that encode the body length in a header length field, set the field offset and size.
 
 ```json
 {
@@ -223,11 +225,11 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
 }
 ```
 
-終端文字または長さフィールドのどちらかは必須です。不完全・矛盾した設定はendpoint生成時に例外になります。
+Terminator-based framing, or length-based framing (fixed-length or length-prefixed), is required. Incomplete or conflicting settings throw when the endpoint is created.
 
-## よく使う設定
+## Common settings
 
-### 接続リトライ
+### Connection retry
 
 ```json
 {
@@ -240,7 +242,7 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
 }
 ```
 
-`MaxRetryCount: -1` は接続リトライで無限リトライを表します。
+`MaxRetryCount: -1` means unlimited connection retries.
 
 ### KeepAlive
 
@@ -255,9 +257,9 @@ TCP はストリームなので、電文の区切り方を設定する必要が�
 }
 ```
 
-KeepAlive 応答は `OnKeepAliveResponseReceived` で受け取れます。`DisconnectOnTimeout` の既定値は `true` です。応答タイムアウト時は遅延応答の誤相関を防ぐため接続を切断し、`ConnectionRetryPolicy` が設定されていれば自動再接続します。
+KeepAlive responses are delivered through `OnKeepAliveResponseReceived`. `DisconnectOnTimeout` defaults to `true`. On a response timeout, the connection is closed to prevent late responses from being correlated incorrectly. If `ConnectionRetryPolicy` is set, the client reconnects automatically.
 
-### メッセージログ
+### Message logging
 
 ```json
 {
@@ -265,25 +267,25 @@ KeepAlive 応答は `OnKeepAliveResponseReceived` で受け取れます。`Disco
 }
 ```
 
-`EnableMessageLogging` はサーバー設定とクライアント設定の両方で使えます。`true` の場合は電文内容が `Information` レベルで、`false`（既定）の場合は `Debug` レベルで出力されます。
+`EnableMessageLogging` can be used on both server and client settings. When `true`, message contents are logged at `Information`. When `false` (the default), they are logged at `Debug`.
 
-## 受信イベントの考え方
+## Receive event model
 
-クライアント側の受信経路は用途で分かれます。
+Client receive paths differ by purpose.
 
-| 経路 | 用途 |
+| Path | Purpose |
 |---|---|
-| `SendAsync` の戻り値 | 自分が送ったリクエストへの応答 |
-| `OnMessageReceived` / `MessageReceived` | リクエストと無関係に届くプッシュ通知 |
-| `OnKeepAliveResponseReceived` | KeepAlive メッセージへの応答 |
+| Return value of `SendAsync` | Response to a request you sent |
+| `OnMessageReceived` / `MessageReceived` | Push notifications unrelated to a request |
+| `OnKeepAliveResponseReceived` | Response to a KeepAlive message |
 
-`SendAsync` が受け取った応答は、通常 `OnMessageReceived` には流れません。通知電文を明示的に分けたい場合は `NotificationPredicate` を設定できます。
+Responses received by `SendAsync` do not normally flow into `OnMessageReceived`. To split notification messages explicitly, set `NotificationPredicate`.
 
-応答しないコマンドは `SendAsync` ではなく `SendOneWayAsync` で送信してください。`SendAsync` は応答必須の契約です。FIFOで応答を識別するプロトコルでは、`MaxConcurrentResponseWaits: 1` と `IncompleteRequestRecovery: Reconnect` の組み合わせを推奨します。
+Send commands that do not expect a response with `SendOneWayAsync`, not `SendAsync`. `SendAsync` is a response-required contract. For protocols that identify responses in FIFO order, use `MaxConcurrentResponseWaits: 1` together with `IncompleteRequestRecovery: Reconnect`.
 
 ## Web UI
 
-Web UI は別パッケージ `dnbn.net.WebUI` で提供されます。接続状態、送受信数、セッション情報などをブラウザで確認できます。
+The Web UI is provided as a separate package, `dnbn.net.WebUI`. You can inspect connection state, send/receive counts, session information, and more in a browser.
 
 ```csharp
 using Dnbn.Configuration;
@@ -304,53 +306,53 @@ var webUI = new WebUIService(
 await webUI.StartAsync();
 ```
 
-起動後、既定では `http://localhost:8080` から確認できます。
+After startup, it is available at `http://localhost:8080` by default.
 
-## サンプル
+## Samples
 
-サンプルプロジェクトには、機能ごとの実行シナリオがあります。
+The sample project includes runnable scenarios for each feature.
 
 ```bash
 dotnet run --project Samples/Dnbn.Sample
 ```
 
-番号を指定して直接実行することもできます。
+You can also run a scenario directly by number.
 
 ```bash
 dotnet run --project Samples/Dnbn.Sample -- 1
 ```
 
-| # | 内容 |
+| # | Description |
 |---|---|
-| 1 | クイックスタート |
-| 2 | チャット / ブロードキャスト |
-| 3 | 障害と自動再接続 |
-| 4 | KeepAlive と死活監視 |
-| 5 | Shift-JIS、固定長、長さフィールド方式 |
-| 6 | タイムアウト、リトライ、応答マッチング |
-| 7 | フィルター、統計情報、メッセージ履歴・送信を含む Web UI |
-| 8 | appsettings.json と DI の対話プレイグラウンド |
+| 1 | Quick start |
+| 2 | Chat / broadcast |
+| 3 | Failures and automatic reconnect |
+| 4 | KeepAlive and liveness monitoring |
+| 5 | Shift-JIS, fixed-length, and length-prefixed framing |
+| 6 | Timeout, retry, and response matching |
+| 7 | Filters, statistics, and Web UI with message history and send |
+| 8 | Interactive playground for appsettings.json and DI |
 
-詳細は [Samples/Dnbn.Sample/README.md](./Samples/Dnbn.Sample/README.md) を参照してください。
+See [Samples/Dnbn.Sample/README.md](./Samples/Dnbn.Sample/README.md) for details.
 
-### .NET Framework から使う
+### Using from .NET Framework
 
-.NET Framework 4.8 のコンソールアプリから利用するサンプルは [Samples/Dnbn.Sample.NetFramework](./Samples/Dnbn.Sample.NetFramework/) にあります(C# 7.3 の範囲で記述。Windows で `dotnet run` または Visual Studio から実行)。
+A sample console app for .NET Framework 4.8 is in [Samples/Dnbn.Sample.NetFramework](./Samples/Dnbn.Sample.NetFramework/) (written within C# 7.3. Run with `dotnet run` or Visual Studio on Windows).
 
 ```bash
 cd Samples/Dnbn.Sample.NetFramework
 dotnet run
 ```
 
-## ログ
+## Logging
 
-dnbn.net は `Microsoft.Extensions.Logging` を使います。Console、Serilog、NLog、log4net など、アプリ側で任意のログプロバイダーを設定してください。
+dnbn.net uses `Microsoft.Extensions.Logging`. Configure any logging provider on the application side, such as Console, Serilog, NLog, or log4net.
 
-log4net を使う場合は、アプリ側で `Microsoft.Extensions.Logging.Log4Net.AspNetCore` を入れてから `AddDnbnNet` を呼び出します。
+To use log4net, add `Microsoft.Extensions.Logging.Log4Net.AspNetCore` in the application, then call `AddDnbnNet`.
 
 ```csharp
 services.AddLogging(builder => builder.AddLog4Net());
 services.AddDnbnNet(configuration);
 ```
 
-`AddTcpMessengerWithLog4net` は互換性のために残っていますが、現在は非推奨です。
+`AddTcpMessengerWithLog4net` remains for compatibility but is deprecated. Calling it throws `NotSupportedException`.

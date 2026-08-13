@@ -1,8 +1,10 @@
-# ログ
+# Logging
 
-dnbn.net は `Microsoft.Extensions.Logging` を使います。ライブラリ側は特定のログ実装に依存しません。
+English | [日本語](./ja/logging.md)
 
-## Consoleログ
+dnbn.net uses `Microsoft.Extensions.Logging`. The library does not depend on a specific logging implementation.
+
+## Console logging
 
 ```csharp
 services.AddLogging(builder => builder.AddConsole());
@@ -11,7 +13,7 @@ services.AddDnbnNet(configuration);
 
 ## log4net
 
-log4net を使う場合はアプリ側で `Microsoft.Extensions.Logging.Log4Net.AspNetCore` を追加します。
+To use log4net, add `Microsoft.Extensions.Logging.Log4Net.AspNetCore` in the application.
 
 ```bash
 dotnet add package Microsoft.Extensions.Logging.Log4Net.AspNetCore
@@ -22,16 +24,16 @@ services.AddLogging(builder => builder.AddLog4Net());
 services.AddDnbnNet(configuration);
 ```
 
-`AddTcpMessengerWithLog4net` は互換性のために残っていますが、現在は非推奨で、呼び出すと `NotSupportedException` になります。
+`AddTcpMessengerWithLog4net` remains for compatibility but is deprecated. Calling it throws `NotSupportedException`.
 
-## メッセージ送受信ログ
+## Message send/receive logging
 
-送受信した電文の内容は、常に以下のレベルでログ出力されます。
+Message contents are always logged, at the following levels:
 
-- `EnableMessageLogging: true` の場合: `Information` レベル
-- `EnableMessageLogging: false`（既定）の場合: `Debug` レベル
+- `EnableMessageLogging: true`: `Information`
+- `EnableMessageLogging: false` (default): `Debug`
 
-サーバー設定またはクライアント設定で `EnableMessageLogging` を有効にすると、既定のログレベル設定（`Information` 以上）でも電文内容が出力されるようになります。
+Enable `EnableMessageLogging` on the server or client config to emit message contents even when the app's minimum level is `Information`.
 
 ```json
 {
@@ -39,12 +41,11 @@ services.AddDnbnNet(configuration);
 }
 ```
 
-`false` のままでも、アプリ側で該当カテゴリのログレベルを `Debug` まで下げれば従来どおり出力されます。
+If you leave it `false`, you can still see the same logs by lowering the category to `Debug` in the application.
 
-## 接続・切断・再接続のログ
+## Connection, disconnect, and reconnect logs
 
-接続、切断、再接続試行のログには相手先の識別情報が含まれます。
+Connection, disconnect, and reconnect logs include peer identity:
 
-- クライアント側: 接続先の `host:port`（例: `TCP Client 'MainClient' disconnected from 192.168.1.10:5000`）
-- サーバー側: セッションID（接続元の `IP:Port` を含む）と接続元エンドポイント
-
+- Client: destination `host:port` (for example, `TCP Client 'MainClient' disconnected from 192.168.1.10:5000`)
+- Server: session ID (including source `IP:Port`) and the remote endpoint

@@ -1,37 +1,39 @@
-# トラブルシューティング
+# Troubleshooting
 
-## 接続できない
+English | [日本語](./ja/troubleshooting.md)
 
-確認すること:
+## Cannot connect
 
-- `RemoteHost` と `RemotePort` が正しいか
-- サーバーが `StartAsync` 済みか
-- ファイアウォールやポート競合がないか
-- 接続リトライが必要なら `ConnectionRetryPolicy` が設定されているか
+Check:
 
-## メッセージが返らない
+- `RemoteHost` and `RemotePort` are correct
+- The server has already called `StartAsync`
+- There is no firewall block or port conflict
+- `ConnectionRetryPolicy` is set if you need connection retry
 
-確認すること:
+## No message comes back
 
-- サーバー側で `SendAsync(sessionId, ...)` を呼んでいるか
-- `MessageTerminator` などのメッセージ境界設定が送受信で合っているか
-- `TimeoutMilliseconds` が短すぎないか
-- サーバー側イベントハンドラで例外が出ていないか
-- 応答しないコマンドを誤って`SendAsync`で送っていないか（`SendOneWayAsync`を使用）
+Check:
 
-## メッセージが分割/結合される
+- The server calls `SendAsync(sessionId, ...)`
+- Message-boundary settings such as `MessageTerminator` match on both sides
+- `TimeoutMilliseconds` is not too short
+- The server event handler is not throwing
+- You are not using `SendAsync` for a command that has no response (use `SendOneWayAsync`)
 
-TCPはストリームなので、区切り設定が合っていないと複数電文が結合されたり途中で切れたりします。
+## Messages are split or concatenated
 
-- テキスト系なら `MessageTerminator`
-- 固定長なら `FixedHeaderLength` と `FixedBodyLength`
-- 可変長なら `FixedHeaderLength`、`LengthFieldOffset`、`LengthFieldLength`
+TCP is a stream. If framing settings do not match, multiple messages can be joined or cut in the middle.
 
-複数の終端候補が同じ位置で一致する場合は最長一致になります。CR/LF/CRLFを受ける場合は `["\r\n", "\r", "\n"]` のように設定できます。TCPチャンクがCRで終わった場合は、CR単独かCRLFかを確定するため、次の1バイトを受信するまでその電文の通知を保留します。
+- Text protocols: `MessageTerminator`
+- Fixed length: `FixedHeaderLength` and `FixedBodyLength`
+- Variable length: `FixedHeaderLength`, `LengthFieldOffset`, `LengthFieldLength`
 
-## timeout後に次の要求が誤った応答を受ける
+When multiple terminator candidates match at the same position, longest match wins. To accept CR/LF/CRLF, you can set `["\r\n", "\r", "\n"]`. If a TCP chunk ends on CR, the parser holds that message until the next byte confirms whether it is CR alone or CRLF.
 
-相関IDがなくFIFOで応答を対応付けるプロトコルでは、timeout後の遅延応答が後続要求へ対応付く可能性があります。次を設定してください。
+## The next request receives the wrong response after a timeout
+
+For protocols without a correlation ID that match responses in FIFO order, a late response after timeout can be paired with a later request. Set:
 
 ```json
 {
@@ -41,31 +43,31 @@ TCPはストリームなので、区切り設定が合っていないと複数�
 }
 ```
 
-## `OnMessageReceived` に応答が来ない
+## Responses do not arrive on `OnMessageReceived`
 
-クライアントの `SendAsync` が受け取った応答は、通常 `OnMessageReceived` には流れません。`OnMessageReceived` はサーバープッシュなど、リクエストと無関係に届く通知向けです。
+Responses received by the client's `SendAsync` do not normally flow into `OnMessageReceived`. `OnMessageReceived` is for notifications unrelated to a request, such as server push.
 
-通知電文を応答扱いさせたくない場合は `NotificationPredicate` を設定してください。
+Set `NotificationPredicate` if you do not want notification messages treated as responses.
 
-## KeepAlive応答と通知が混ざる
+## KeepAlive responses mix with notifications
 
-KeepAliveは通常要求と同じFIFO応答キューで相関されるため、要求・応答が順序どおりに返るプロトコルでは `SendAsync` の応答を横取りしません。また、通常要求が応答待ちの間はKeepAlive送信自体が延期されます。
+KeepAlive is correlated on the same FIFO response queue as normal requests, so it does not steal `SendAsync` responses on protocols that return replies in order. KeepAlive sends themselves are also deferred while a normal request is waiting.
 
-ただし `ResponsePredicate` 未設定の場合、KeepAlive応答待ちの間に届いたサーバープッシュ通知はKeepAlive応答として消費されます。プッシュ通知があるプロトコルでは、コードで `KeepAliveConfig.ResponsePredicate` と `NotificationPredicate` を設定してください。`NotificationPredicate` にマッチした電文は、KeepAlive応答を含むすべての応答マッチングより優先して通知として配信されます。
+If `ResponsePredicate` is unset, a server push that arrives while a KeepAlive response is pending is consumed as the KeepAlive response. For protocols with push notifications, set `KeepAliveConfig.ResponsePredicate` and `NotificationPredicate` in code. Messages that match `NotificationPredicate` are delivered as notifications before any response matching, including KeepAlive.
 
-## KeepAliveのタイムアウトで切断される
+## Disconnected by KeepAlive timeout
 
-KeepAlive応答が間隔（`IntervalSeconds`）内に返らない場合、既定では接続を切断します（`DisconnectOnTimeout: true`）。タイムアウト後に遅れて届いたKeepAlive応答が、後続の通常要求の応答として誤って相関されるのを防ぐためです。切断はNW障害として扱われるため、`ConnectionRetryPolicy` が設定されていれば自動再接続します。
+If a KeepAlive response does not return within `IntervalSeconds`, the default is to disconnect (`DisconnectOnTimeout: true`). This prevents a late KeepAlive response from being correlated as the reply to a later normal request. The disconnect is treated as a network failure, so `ConnectionRetryPolicy` triggers auto-reconnect when set.
 
-タイムアウト後も接続を維持する必要がある場合は `DisconnectOnTimeout: false` を明示できます。ただし、応答内容でKeepAliveを区別できないプロトコルでは遅延応答の誤相関リスクが残ります。
+Set `DisconnectOnTimeout: false` only if you must keep the connection after timeout. For protocols that cannot distinguish KeepAlive by content, late-response miscorrelation remains a risk.
 
-## 無通信中の切断に気づけない（送信時に初めてエラーになる）
+## Idle disconnects are not noticed until the next send
 
-NW障害や中継機器の無通信タイムアウトで接続が切れても、無通信のままではOSが切断を検知できず、次の `SendAsync` で初めてエラーになることがあります。対策:
+If the network or an intermediary times out an idle connection, the OS may not notice until the next `SendAsync`. Mitigations:
 
-- `TcpKeepAlive`（TCPレベルのキープアライブ）を有効にすると、OSが定期的にプローブを送信して切断を検知します。切断が検知されると受信ループが終了し、`ConnectionRetryPolicy` を設定していれば自動再接続が動作します。
-- 相手アプリケーションの生存確認まで必要な場合（プロセスは生きているがハングしている等）は、電文を送信する `KeepAlive`（アプリケーションレベル）を使用してください。両者は併用できます。
+- Enable `TcpKeepAlive` (TCP-level keep-alive) so the OS sends probes and detects the drop. When the drop is detected, the receive loop ends, and `ConnectionRetryPolicy` starts auto-reconnect if set.
+- If you also need application liveness (the process is up but hung), use `KeepAlive` (application-level messages). The two can be used together.
 
-## 受信バッファが大きくなる
+## The receive buffer grows large
 
-終端文字または長さフィールドの設定は必須です。不完全・矛盾した設定はendpoint生成時に例外になります。大きな宣言長や終端未到着によるメモリ使用を制限するには`MaxReceiveBufferBytes`も設定してください。
+Terminator framing or length-based framing (fixed-length or length-prefixed) is required. Incomplete or conflicting settings throw when the endpoint is created. Set `MaxReceiveBufferBytes` as well to limit memory use from a large declared length or a missing terminator.

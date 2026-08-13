@@ -1,12 +1,14 @@
 # Web UI
 
-Web UI は `dnbn.net.WebUI` パッケージで提供されるオプション機能です。
+English | [日本語](./ja/web-ui.md)
+
+The Web UI is an optional feature provided by the `dnbn.net.WebUI` package. It targets .NET 8 or later.
 
 ```bash
 dotnet add package dnbn.net.WebUI
 ```
 
-## 設定
+## Configuration
 
 ```json
 {
@@ -28,7 +30,7 @@ dotnet add package dnbn.net.WebUI
 }
 ```
 
-## 起動
+## Startup
 
 ```csharp
 using Dnbn.Configuration;
@@ -49,9 +51,9 @@ var webUI = new WebUIService(
 await webUI.StartAsync();
 ```
 
-Web UI内部のHTTPホストはCtrl-Cを独自に処理しません。ASP.NET Core / Generic Hostでは外側のホストの停止トークンを `StartAsync` に渡し、アプリケーション停止と連動させてください。
+The HTTP host inside the Web UI does not handle Ctrl-C on its own. In ASP.NET Core / Generic Host, pass the outer host's stopping token to `StartAsync` so the UI stops with the application.
 
-拡張メソッドも利用できます。
+Extension methods are also available.
 
 ```csharp
 using Dnbn.Extensions;
@@ -59,51 +61,53 @@ using Dnbn.Extensions;
 var webUI = await server.StartWebUIAsync(config.WebUI);
 ```
 
-複数のサーバー/クライアントをまとめて表示する場合:
+To display multiple servers and clients together:
 
 ```csharp
 var webUI = await servers.StartWebUIAsync(clients, config.WebUI);
 ```
 
-## エンドポイント
+`StartWebUIAsync` returns `null` when `WebUIConfig.Enabled` is not `true`.
 
-| パス | 説明 |
+## Endpoints
+
+| Path | Description |
 |---|---|
 | `/` | Web UI |
-| `/api/status` | 全体ステータス |
-| `/api/status/client` | クライアント状態 |
-| `/api/status/server` | サーバー状態 |
-| `/api/status/stream` | SSEストリーム |
-| `/api/health` | ヘルスチェック |
-| `/api/timeline` | 接続・切断・状態遷移・エラーのリングバッファ履歴 |
-| `/api/messages` | 送受信メッセージ履歴（既定OFF） |
-| `/api/analytics` | クライアント別の応答時間 min / avg / p95 / max |
-| `/api/send` | Web UI送信（既定OFF、`POST`） |
+| `/api/status` | Overall status |
+| `/api/status/client` | Client status |
+| `/api/status/server` | Server status |
+| `/api/status/stream` | SSE stream |
+| `/api/health` | Health check |
+| `/api/timeline` | Ring-buffer history of connect, disconnect, state changes, and errors |
+| `/api/messages` | Send/receive message history (off by default) |
+| `/api/analytics` | Per-client response time min / avg / p95 / max |
+| `/api/send` | Web UI send (`POST`, off by default) |
 
-## 運用・診断機能
+## Operations and diagnostics
 
-イベントタイムラインは常に固定件数だけ保持します。Web UI開始時点ですでに接続・起動済みの場合は、`ConnectedAt` / `StartedAt` と既存セッション情報から初期イベントを復元します。メッセージ履歴は電文内容をメモリに保持するため、`EnableMessageHistory` を明示的に有効化した場合だけ記録されます。件数と1件あたりのペイロード上限を超えたデータは、古い項目またはペイロード末尾から破棄されます。
+The event timeline always keeps a fixed number of entries. If a connection or server is already running when the Web UI starts, initial events are restored from `ConnectedAt` / `StartedAt` and existing session information. Message history stores payloads in memory, so it is recorded only when `EnableMessageHistory` is enabled. Data beyond the entry count or per-entry payload cap is dropped from older items or from the end of the payload.
 
-TIMELINEとMESSAGESの `TARGET` で、クライアントまたはサーバー単位に絞り込めます。クライアント／サーバー一覧の行をクリックすると詳細モーダルが開き、その対象だけのイベントログ・メッセージログ・応答時間統計を表示します。モーダルを開いている間もログは自動更新されます。メッセージ表示はTEXT/HEXを切り替えられます。
+Use `TARGET` on TIMELINE and MESSAGES to filter by client or server. Clicking a client or server row opens a detail modal with event logs, message logs, and response-time stats for that target. Logs keep updating while the modal is open. Message display can switch between TEXT and HEX.
 
-APIから絞り込む場合は、`source` と `sourceType`（`Client` または `Server`）をクエリに指定します。
+To filter from the API, pass `source` and `sourceType` (`Client` or `Server`) as query parameters.
 
 ```text
 /api/timeline?source=MainClient&sourceType=Client
 /api/messages?source=MainServer&sourceType=Server
 ```
 
-応答時間は、保持中の `Response` トレースからクライアント別に計算します。本格的な長期監視ではなく、その場の障害調査向けです。
+Response times are computed per client from retained `Response` traces. This is for on-the-spot troubleshooting, not long-term monitoring.
 
-## Web UIからの送信
+## Sending from the Web UI
 
-送信機能は既定で無効です。有効にする場合は、少なくともトークンを設定してください。
+Sending is disabled by default. If you enable it, set a token at minimum.
 
 ```json
 {
   "AllowSendFromUI": true,
-  "SendAuthToken": "十分に長いランダムな値"
+  "SendAuthToken": "a sufficiently long random value"
 }
 ```
 
-送信APIはトークンを `X-Dnbn-Send-Token` ヘッダーで受け取ります。Web UIの送信はアプリ本体と同じ接続・送信キュー・応答マッチングを共有します。応答のある電文は通常送信を使い、ONE-WAYは応答のない電文だけに使ってください。
+The send API accepts the token in the `X-Dnbn-Send-Token` header. Web UI sends share the application's connection, send queue, and response matching. Use normal send for messages that expect a response, and ONE-WAY only for messages that do not.
